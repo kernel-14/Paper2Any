@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Wand2, Upload, FileText, Send, Download, Image as ImageIcon } from 'lucide-react';
 import type { DiagramType, DiagramStyle, ChatMessage } from './types';
-import { API_KEY, API_URL_OPTIONS, DEFAULT_LLM_API_URL, getPurchaseUrl } from '../../config/api';
+import { API_URL_OPTIONS, DEFAULT_LLM_API_URL, getPurchaseUrl } from '../../config/api';
 import {
   DEFAULT_PAPER2DRAWIO_IMAGE_MODEL,
   DEFAULT_PAPER2DRAWIO_MODEL,
@@ -12,6 +12,7 @@ import {
 } from '../../config/models';
 import { useAuthStore } from '../../stores/authStore';
 import { getApiSettings, saveApiSettings } from '../../services/apiSettingsService';
+import { backendFetch } from '../../services/backendClient';
 import { verifyLlmConnection } from '../../services/llmService';
 import Banner from './Banner';
 import QRCodeTooltip from '../QRCodeTooltip';
@@ -323,9 +324,8 @@ export default function Paper2DrawioPage({
           formData.append('file_kind', 'pdf');
         }
 
-        const res = await fetch(`${API_BASE}/api/v1/paper2figure/generate-json`, {
+        const res = await backendFetch(`${API_BASE}/api/v1/paper2figure/generate-json`, {
           method: 'POST',
-          headers: { 'X-API-Key': API_KEY },
           body: formData,
         });
 
@@ -376,9 +376,8 @@ export default function Paper2DrawioPage({
         formData.append('file', file);
       }
 
-      const res = await fetch(`${API_BASE}/api/v1/paper2drawio/generate`, {
+      const res = await backendFetch(`${API_BASE}/api/v1/paper2drawio/generate`, {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
 
@@ -610,11 +609,10 @@ export default function Paper2DrawioPage({
 
     try {
       const latestXml = await syncXmlFromDrawio();
-      const res = await fetch(`${API_BASE}/api/v1/paper2drawio/chat`, {
+      const res = await backendFetch(`${API_BASE}/api/v1/paper2drawio/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Key': API_KEY,
         },
         body: JSON.stringify({
           current_xml: latestXml || xmlContent,
@@ -661,11 +659,10 @@ export default function Paper2DrawioPage({
       }
 
       try {
-        const res = await fetch(`${API_BASE}/api/v1/paper2drawio/export`, {
+        const res = await backendFetch(`${API_BASE}/api/v1/paper2drawio/export`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-API-Key': API_KEY,
           },
           body: JSON.stringify({
             xml_content: xmlContent,

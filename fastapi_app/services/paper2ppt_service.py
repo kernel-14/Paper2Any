@@ -108,7 +108,11 @@ from fastapi_app.schemas import (
     PPTGenerationRequest,
 )
 from fastapi_app.services.managed_api_service import resolve_llm_credentials
-from fastapi_app.utils import _from_outputs_url, _to_outputs_url
+from fastapi_app.utils import (
+    _to_outputs_url,
+    get_outputs_root,
+    resolve_outputs_path,
+)
 from fastapi_app.workflow_adapters.wa_paper2ppt import (
     run_paper2page_content_wf_api,
     run_paper2page_content_refine_wf_api,
@@ -121,7 +125,7 @@ from dataflow_agent.utils import get_project_root
 log = get_logger(__name__)
 
 PROJECT_ROOT = get_project_root()
-BASE_OUTPUT_DIR = (PROJECT_ROOT / "outputs").resolve()
+BASE_OUTPUT_DIR = get_outputs_root()
 
 
 class Paper2PPTService:
@@ -257,10 +261,7 @@ class Paper2PPTService:
 
         result_root: Path | None = None
         if req.result_path:
-            base_dir = Path(req.result_path)
-            if not base_dir.is_absolute():
-                base_dir = PROJECT_ROOT / base_dir
-            result_root = base_dir.resolve()
+            result_root = self.resolve_result_path(req.result_path)
 
         resp_model = await run_paper2page_content_refine_wf_api(
             p2ppt_req,
@@ -303,7 +304,9 @@ class Paper2PPTService:
                 # 常见包含路径的字段
                 for key in ["ppt_img_path", "asset_ref", "generated_img_path"]:
                     if key in item and item[key]:
-                        item[key] = _from_outputs_url(item[key])
+                        value = str(item[key]).strip()
+                        if value.startswith(("http://", "https://", "/outputs/")) or Path(value).is_absolute() or value.startswith("outputs/"):
+                            item[key] = str(resolve_outputs_path(value, must_exist=False))
 
         # 转换字符串布尔值
         get_down_bool = str(req.get_down).lower() in ("true", "1", "yes")
@@ -435,15 +438,12 @@ class Paper2PPTService:
         ts = int(time.time())
         # 如果有 email，则使用 email，否则使用 default
         code = email or "default"
-        run_dir = PROJECT_ROOT / BASE_OUTPUT_DIR / code / "paper2ppt" / str(ts)
+        run_dir = BASE_OUTPUT_DIR / code / "paper2ppt" / str(ts)
         run_dir.mkdir(parents=True, exist_ok=True)
         return run_dir
 
     def resolve_result_path(self, result_path: str) -> Path:
-        base_dir = Path(result_path)
-        if not base_dir.is_absolute():
-            base_dir = PROJECT_ROOT / base_dir
-        return base_dir.resolve()
+        return resolve_outputs_path(result_path, must_exist=False, allow_dirs=True)
 
     async def cache_reference_image_for_result(
         self,
@@ -632,11 +632,9 @@ class Paper2PPTService:
         if not result_path:
             return []
 
-        root = Path(result_path)
-        if not root.is_absolute():
-            root = PROJECT_ROOT / root
-
-        if not root.exists():
+        try:
+            root = resolve_outputs_path(result_path, must_exist=True, allow_dirs=True)
+        except HTTPException:
             return []
 
         urls: list[str] = []

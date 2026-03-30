@@ -26,6 +26,7 @@ from dataflow_agent.utils_markdown_sections import (
 from dataflow_agent.workflow import run_workflow
 
 from fastapi_app.schemas import Paper2PPTRequest, Paper2PPTResponse
+from fastapi_app.utils import get_outputs_root, resolve_outputs_path
 
 log = get_logger(__name__)
 
@@ -50,10 +51,9 @@ def _ensure_result_path_for_full(email: str | None) -> Path:
     为 full pipeline 统一一个根输出目录：
     outputs/{email or 'default'}/paper2ppt/<timestamp>/
     """
-    project_root = get_project_root()
     ts = int(time.time())
     code = email or "default"
-    base_dir = (project_root / "outputs" / code / "paper2ppt" / str(ts)).resolve()
+    base_dir = (get_outputs_root() / code / "paper2ppt" / str(ts)).resolve()
     base_dir.mkdir(parents=True, exist_ok=True)
     return base_dir
 
@@ -318,7 +318,7 @@ async def run_paper2ppt_wf_api(
     """
     base_dir: Path | None = None
     if result_path:
-        base_dir = Path(result_path).expanduser().resolve()
+        base_dir = resolve_outputs_path(result_path, must_exist=False, allow_dirs=True)
         base_dir.mkdir(parents=True, exist_ok=True)
 
     state = _init_state_from_request(

@@ -17,7 +17,7 @@ from fastapi_app.schemas import (
     PPTGenerationRequest,
 )
 from dataflow_agent.utils.version_manager import ImageVersionManager
-from fastapi_app.utils import _to_outputs_url
+from fastapi_app.utils import _to_outputs_url, resolve_outputs_path
 
 # 注意：prefix 由 main.py 统一加 "/api/paper2ppt"
 router = APIRouter(tags=["paper2ppt"])
@@ -172,6 +172,7 @@ async def paper2ppt_ppt_json(
     responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
 )
 async def paper2ppt_generate_task(
+    request: Request,
     img_gen_model_name: str = Form(...),
     chat_api_url: Optional[str] = Form(None),
     api_key: Optional[str] = Form(None),
@@ -209,7 +210,7 @@ async def paper2ppt_generate_task(
         edit_prompt=edit_prompt,
         image_resolution=image_resolution,
     )
-    return await task_service.submit_generate_task(req=req, reference_img=reference_img)
+    return await task_service.submit_generate_task(req=req, reference_img=reference_img, request=request)
 
 
 @router.get(
@@ -391,7 +392,7 @@ async def get_version_history(
     try:
         # 解码 result_path
         decoded_path = base64.b64decode(encoded_path).decode('utf-8')
-        img_dir = Path(decoded_path) / "ppt_pages"
+        img_dir = resolve_outputs_path(decoded_path, must_exist=True, allow_dirs=True) / "ppt_pages"
 
         if not img_dir.exists():
             raise HTTPException(status_code=404, detail="图片目录不存在")
@@ -434,7 +435,7 @@ async def revert_to_version(
         包含当前图片URL和恢复版本号的字典
     """
     try:
-        img_dir = Path(result_path) / "ppt_pages"
+        img_dir = resolve_outputs_path(result_path, must_exist=True, allow_dirs=True) / "ppt_pages"
 
         if not img_dir.exists():
             raise HTTPException(status_code=404, detail="图片目录不存在")

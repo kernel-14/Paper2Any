@@ -5,6 +5,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { getApiSettings, saveApiSettings } from '../../services/apiSettingsService';
 import { API_KEY, DEFAULT_LLM_API_URL, API_URL_OPTIONS, getPurchaseUrl } from '../../config/api';
 import { DEFAULT_PAPER2REBUTTAL_MODEL, PAPER2REBUTTAL_MODELS, withModelOptions } from '../../config/models';
+import { backendFetch } from '../../services/backendClient';
 import ReactMarkdown from 'react-markdown';
 import Timeline from './Timeline';
 import TodoList from './TodoList';
@@ -164,9 +165,7 @@ const Paper2RebuttalPage = () => {
       const url = params.toString()
         ? `/api/v1/paper2rebuttal/history?${params.toString()}`
         : '/api/v1/paper2rebuttal/history';
-      const response = await fetch(url, {
-        headers: { 'X-API-Key': API_KEY },
-      });
+      const response = await backendFetch(url);
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data?.detail || t('paper2rebuttal:errors.fetchSessionFailed'));
@@ -183,9 +182,7 @@ const Paper2RebuttalPage = () => {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch(`/api/v1/paper2rebuttal/session/${targetSessionId}`, {
-        headers: { 'X-API-Key': API_KEY },
-      });
+      const response = await backendFetch(`/api/v1/paper2rebuttal/session/${targetSessionId}`);
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data?.detail || t('paper2rebuttal:errors.fetchSessionFailed'));
@@ -238,9 +235,8 @@ const Paper2RebuttalPage = () => {
         formData.append('api_key', apiKey);
         formData.append('model', model);
       }
-      const response = await fetch('/api/v1/paper2rebuttal/parse-review', {
+      const response = await backendFetch('/api/v1/paper2rebuttal/parse-review', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
       const { data, raw } = await parseJson(response);
@@ -297,9 +293,8 @@ const Paper2RebuttalPage = () => {
       formData.append('model', model);
 
       // Start the analysis (non-blocking)
-      const response = await fetch('/api/v1/paper2rebuttal/start', {
+      const response = await backendFetch('/api/v1/paper2rebuttal/start', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
 
@@ -352,9 +347,7 @@ const Paper2RebuttalPage = () => {
               // SSE timeout: switch to polling, wait for all_questions_processed
               addLog('⚠️ SSE 超时，改用轮询等待全部问题处理完成...');
               const pollInterval = setInterval(() => {
-                fetch(`/api/v1/paper2rebuttal/session/${sessionId}`, {
-                  headers: { 'X-API-Key': API_KEY },
-                })
+                backendFetch(`/api/v1/paper2rebuttal/session/${sessionId}`)
                   .then((res) => res.json())
                   .then((data) => {
                     const hasQuestions = data.questions && data.questions.length > 0;
@@ -382,9 +375,7 @@ const Paper2RebuttalPage = () => {
             // Do NOT fetch immediately: backend may still be processing. Poll until all_questions_processed.
             console.log('[Polling] Starting polling due to SSE onerror (CLOSED)');
             const pollInterval = setInterval(() => {
-              fetch(`/api/v1/paper2rebuttal/session/${sessionId}`, {
-                headers: { 'X-API-Key': API_KEY },
-              })
+              backendFetch(`/api/v1/paper2rebuttal/session/${sessionId}`)
                 .then((res) => res.json())
                 .then((data) => {
                   const hasQuestions = data.questions && data.questions.length > 0;
@@ -411,9 +402,7 @@ const Paper2RebuttalPage = () => {
         console.log('[Polling] Starting fallback polling due to EventSource creation failure');
         // Fallback: poll for session data; only switch when ALL questions have strategy (avoid incomplete data)
         const pollInterval = setInterval(() => {
-          fetch(`/api/v1/paper2rebuttal/session/${sessionId}`, {
-            headers: { 'X-API-Key': API_KEY },
-          })
+          backendFetch(`/api/v1/paper2rebuttal/session/${sessionId}`)
             .then(res => res.json())
             .then(data => {
               const hasQuestions = data.questions && data.questions.length > 0;
@@ -450,9 +439,7 @@ const Paper2RebuttalPage = () => {
     try {
       setLoading(true);
       console.log(`[fetchSessionData] Called with sessionId=${sessionId}, retryCount=${retryCount}`);
-      const response = await fetch(`/api/v1/paper2rebuttal/session/${sessionId}`, {
-        headers: { 'X-API-Key': API_KEY },
-      });
+      const response = await backendFetch(`/api/v1/paper2rebuttal/session/${sessionId}`);
 
       if (!response.ok) {
         throw new Error(t('paper2rebuttal:errors.fetchSessionFailed'));
@@ -569,9 +556,8 @@ const Paper2RebuttalPage = () => {
       }
       formData.append('model', model);
 
-      const response = await fetch('/api/v1/paper2rebuttal/revise', {
+      const response = await backendFetch('/api/v1/paper2rebuttal/revise', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
 
@@ -614,9 +600,8 @@ const Paper2RebuttalPage = () => {
       formData.append('session_id', session.session_id);
       formData.append('question_idx', currentQuestionIdx.toString());
 
-      const response = await fetch('/api/v1/paper2rebuttal/mark-satisfied', {
+      const response = await backendFetch('/api/v1/paper2rebuttal/mark-satisfied', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
 
@@ -682,9 +667,8 @@ const Paper2RebuttalPage = () => {
       addLog(t('paper2rebuttal:logs.startGenerating'));
       addLog(t('paper2rebuttal:logs.integrating'));
       
-      const response = await fetch('/api/v1/paper2rebuttal/generate-final', {
+      const response = await backendFetch('/api/v1/paper2rebuttal/generate-final', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
 
@@ -729,10 +713,9 @@ const Paper2RebuttalPage = () => {
     setExportingZip(true);
     setError('');
     try {
-      const response = await fetch('/api/v1/paper2rebuttal/export-zip', {
+      const response = await backendFetch('/api/v1/paper2rebuttal/export-zip', {
         method: 'POST',
         headers: {
-          'X-API-Key': API_KEY,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -1556,9 +1539,7 @@ const Paper2RebuttalPage = () => {
                 <button
                   onClick={async () => {
                     try {
-                      const response = await fetch(`/api/v1/paper2rebuttal/summary/${session.session_id}`, {
-                        headers: { 'X-API-Key': API_KEY },
-                      });
+                      const response = await backendFetch(`/api/v1/paper2rebuttal/summary/${session.session_id}`);
                       const data = await response.json();
                       const blob = new Blob([data.markdown], { type: 'text/markdown' });
                       const url = URL.createObjectURL(blob);

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { API_KEY } from '../../config/api';
 import { useAuthStore } from '../../stores/authStore';
 import { getApiSettings, saveApiSettings } from '../../services/apiSettingsService';
 import { checkQuota, recordUsage } from '../../services/quotaService';
+import { backendFetch } from '../../services/backendClient';
 import { useRuntimeBilling } from '../../hooks/useRuntimeBilling';
 import { Step, ScriptPage } from './types';
 import {
@@ -243,9 +243,8 @@ const Paper2VideoPage = () => {
         else if (avatarPreset) formData.append('avatar_preset', avatarPreset);
       }
 
-      const res = await fetch('/api/v1/paper2video/generate-subtitle', {
+      const res = await backendFetch('/api/v1/paper2video/generate-subtitle', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
 
@@ -318,9 +317,11 @@ const Paper2VideoPage = () => {
       formData.append('email', user?.id || user?.email || '');
       if (stateSnapshot) formData.append('state_snapshot', stateSnapshot);
 
-      const res = await fetch('/api/v1/paper2video/generate-video', {
+      const res = await backendFetch('/api/v1/paper2video/generate-video', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
+        headers: {
+          'X-Workflow-Amount': String(videoGenerationCost),
+        },
         body: formData,
       });
 

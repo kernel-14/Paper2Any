@@ -26,6 +26,7 @@ from dataflow_agent.utils import get_project_root
 from dataflow_agent.workflow import run_workflow
 
 from fastapi_app.schemas import Paper2FigureRequest, Paper2FigureResponse
+from fastapi_app.utils import get_outputs_root, resolve_outputs_path
 
 log = get_logger(__name__)
 
@@ -119,10 +120,10 @@ def _build_result_root(result_path: Path | None, project_root: Path, email: str,
     未传入时按 outputs/{email}/{task_name}/{ts} 自动生成。
     """
     if result_path:
-        return Path(result_path).resolve()
+        return resolve_outputs_path(result_path, must_exist=False, allow_dirs=True)
 
     user_dir = email or ""
-    return (project_root / "outputs" / user_dir / task_name / ts).resolve()
+    return (get_outputs_root() / user_dir / task_name / ts).resolve()
 
 
 def _get_state_attr(state: Any, key: str, default: str = "") -> str:

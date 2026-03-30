@@ -6,6 +6,7 @@ export interface RuntimeConfig {
   user_api_config_required: boolean;
   managed_api_enabled: boolean;
   managed_api_url: string;
+  server_side_billing_enforced: boolean;
   workflow_costs: Record<string, number>;
   guest_daily_limit: number;
   signup_bonus_points: number;
@@ -22,6 +23,7 @@ const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
   user_api_config_required: true,
   managed_api_enabled: false,
   managed_api_url: DEFAULT_LLM_API_URL,
+  server_side_billing_enforced: false,
   workflow_costs: {},
   guest_daily_limit: 15,
   signup_bonus_points: 20,

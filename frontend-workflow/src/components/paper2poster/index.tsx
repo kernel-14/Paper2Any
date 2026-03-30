@@ -1,11 +1,11 @@
 import React, { useState, useEffect, ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { API_KEY } from '../../config/api';
 import { checkQuota, recordUsage } from '../../services/quotaService';
 import { verifyLlmConnection } from '../../services/llmService';
 import { useAuthStore } from '../../stores/authStore';
 import { getApiSettings, saveApiSettings } from '../../services/apiSettingsService';
 import { uploadAndSaveFile } from '../../services/fileService';
+import { backendFetch } from '../../services/backendClient';
 import { useRuntimeBilling } from '../../hooks/useRuntimeBilling';
 
 import { Step, PosterConfig, GenerateResult } from './types';
@@ -290,9 +290,8 @@ const Paper2PosterPage = () => {
         formData.append('aff_logo_file', affLogoFile);
       }
 
-      const res = await fetch('/api/v1/paper2poster/generate', {
+      const res = await backendFetch('/api/v1/paper2poster/generate', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
 

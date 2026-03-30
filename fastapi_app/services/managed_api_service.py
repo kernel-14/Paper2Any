@@ -124,6 +124,7 @@ def get_runtime_billing_config() -> dict:
         "user_api_config_required": is_user_api_config_required(),
         "managed_api_enabled": bool(managed_api_url and managed_api_key),
         "managed_api_url": managed_api_url,
+        "server_side_billing_enforced": True,
         "workflow_costs": pricing.get("workflows", {}),
         "guest_daily_limit": int(billing.get("guest_daily_limit", 15)),
         "signup_bonus_points": int(billing.get("signup_bonus_points", 20)),

@@ -1,4 +1,4 @@
-import { API_KEY } from '../config/api';
+import { backendFetch } from './backendClient';
 import { fetchRuntimeConfig, getRuntimeConfigSync } from './runtimeConfigService';
 
 const DEFAULT_VERIFY_TIMEOUT_MS = 30000;
@@ -47,11 +47,10 @@ export async function verifyLlmConnection(
     const timeoutMs = getVerifyTimeoutMs();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-    const res = await fetch(verifyUrl, {
+    const res = await backendFetch(verifyUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-API-Key': API_KEY,
       },
       body: JSON.stringify({
         api_url: baseUrl,

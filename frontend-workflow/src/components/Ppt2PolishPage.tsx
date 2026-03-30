@@ -7,7 +7,7 @@ import {
   MessageSquare, Eye, RefreshCw, FileText, Image as ImageIcon, Copy, Info
 } from 'lucide-react';
 import { uploadAndSaveFile } from '../services/fileService';
-import { API_KEY, API_URL_OPTIONS, DEFAULT_LLM_API_URL, getPurchaseUrl } from '../config/api';
+import { API_URL_OPTIONS, DEFAULT_LLM_API_URL, getPurchaseUrl } from '../config/api';
 import {
   DEFAULT_PPT2POLISH_GEN_FIG_MODEL,
   DEFAULT_PPT2POLISH_MODEL,
@@ -19,6 +19,7 @@ import { checkQuota, recordUsage } from '../services/quotaService';
 import { verifyLlmConnection } from '../services/llmService';
 import { useAuthStore } from '../stores/authStore';
 import { getApiSettings, saveApiSettings } from '../services/apiSettingsService';
+import { backendFetch } from '../services/backendClient';
 import QRCodeTooltip from './QRCodeTooltip';
 import ManagedApiNotice from './ManagedApiNotice';
 import { useRuntimeBilling } from '../hooks/useRuntimeBilling';
@@ -631,9 +632,8 @@ const Ppt2PolishPage = () => {
       
       console.log('Sending request to /api/v1/paper2ppt/page-content'); // 调试信息
       
-      const res = await fetch('/api/v1/paper2ppt/page-content', {
+      const res = await backendFetch('/api/v1/paper2ppt/page-content', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
 
@@ -925,9 +925,11 @@ const Ppt2PolishPage = () => {
         // ... 其他参数
       });
 
-      const res = await fetch('/api/v1/paper2ppt/generate', {
+      const res = await backendFetch('/api/v1/paper2ppt/generate', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
+        headers: {
+          'X-Workflow-Amount': String(Math.max(1, slides.length)),
+        },
         body: formData,
       });
 
@@ -1073,9 +1075,11 @@ const Ppt2PolishPage = () => {
       console.log('pagecontent to send:', pagecontent);
       formData.append('pagecontent', JSON.stringify(pagecontent));
 
-      const res = await fetch('/api/v1/paper2ppt/generate', {
+      const res = await backendFetch('/api/v1/paper2ppt/generate', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
+        headers: {
+          'X-Workflow-Amount': '1',
+        },
         body: formData,
       });
       
@@ -1176,10 +1180,7 @@ const Ppt2PolishPage = () => {
 
     try {
       const encodedPath = btoa(resultPath);
-      const res = await fetch(
-        `/api/v1/paper2ppt/version-history/${encodedPath}/${pageIndex}`,
-        { headers: { 'X-API-Key': API_KEY } }
-      );
+      const res = await backendFetch(`/api/v1/paper2ppt/version-history/${encodedPath}/${pageIndex}`);
 
       if (!res.ok) return;
 
@@ -1220,9 +1221,8 @@ const Ppt2PolishPage = () => {
       formData.append('page_id', String(currentSlideIndex));
       formData.append('target_version', String(versionNumber));
 
-      const res = await fetch('/api/v1/paper2ppt/revert-version', {
+      const res = await backendFetch('/api/v1/paper2ppt/revert-version', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
 
@@ -1288,9 +1288,8 @@ const Ppt2PolishPage = () => {
       }));
       formData.append('pagecontent', JSON.stringify(pagecontent));
 
-      const res = await fetch('/api/v1/paper2ppt/generate', {
+      const res = await backendFetch('/api/v1/paper2ppt/generate', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
       

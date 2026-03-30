@@ -70,6 +70,13 @@ class AppSettings(BaseSettings):
     APP_BILLING_MODE: str = "paid"
     BILLING_PRICING_CONFIG_PATH: str = str(_project_root() / "fastapi_app" / "config" / "pricing.yaml")
     GUEST_USAGE_DB_PATH: str = str(_project_root() / "outputs" / "system" / "guest_quota.sqlite3")
+    SECURITY_RATE_LIMIT_ENABLED: bool = True
+    SECURITY_TRUST_PROXY_HEADERS: bool = False
+    FILE_ACCESS_URL_TTL_SECONDS: int = 900
+    FILE_ACCESS_TOKEN_SECRET: str = ""
+    SECURITY_BLOCKED_PUBLIC_OUTPUT_PREFIXES: str = "kb_data,kb_outputs,kb_exports,system"
+    CORS_ALLOW_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+    CORS_ALLOW_ORIGIN_REGEX: str = ""
     DEFAULT_SEARCH_API_KEY: str = ""
     DEFAULT_GOOGLE_CSE_ID: str = ""
     SUPABASE_URL: str = ""

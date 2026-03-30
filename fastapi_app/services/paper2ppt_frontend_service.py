@@ -25,7 +25,7 @@ from fastapi_app.schemas import (
     FrontendPPTReviewRequest,
 )
 from fastapi_app.services.managed_api_service import resolve_llm_credentials
-from fastapi_app.utils import _from_outputs_url, _to_outputs_url
+from fastapi_app.utils import _from_outputs_url, _to_outputs_url, resolve_outputs_path
 
 log = get_logger(__name__)
 
@@ -978,9 +978,12 @@ class Paper2PPTFrontendService:
         if not raw:
             return ""
 
-        candidate = Path(raw)
+        candidate = Path(raw).expanduser()
         if candidate.is_absolute():
-            return str(candidate.resolve())
+            try:
+                return str(resolve_outputs_path(candidate, must_exist=True, allow_files=True))
+            except HTTPException:
+                return ""
 
         search_paths = [
             base_dir / candidate,
@@ -1034,7 +1037,7 @@ class Paper2PPTFrontendService:
                 {
                     "key": key,
                     "label": str(raw_asset.get("label") or key.replace("_", " ").title()).strip(),
-                    "src": resolved_src or _from_outputs_url(src),
+                    "src": resolved_src or "",
                     "alt": str(raw_asset.get("alt") or raw_asset.get("label") or key).strip(),
                     "source_type": source_type,
                     "storage_path": resolved_src or "",
@@ -1861,8 +1864,12 @@ If there are any meaningful problems, set passed=false and provide a concrete re
             or ""
         ).strip()
         if storage_path:
-            normalized["storage_path"] = storage_path
-            normalized["src"] = _to_outputs_url(storage_path, request) if request is not None else storage_path
+            try:
+                resolved_storage = str(resolve_outputs_path(storage_path, must_exist=False, allow_files=True))
+            except HTTPException:
+                resolved_storage = ""
+            normalized["storage_path"] = resolved_storage
+            normalized["src"] = _to_outputs_url(resolved_storage, request) if (request is not None and resolved_storage) else resolved_storage
         else:
             normalized["src"] = str(normalized.get("src") or "").strip()
             normalized["storage_path"] = ""

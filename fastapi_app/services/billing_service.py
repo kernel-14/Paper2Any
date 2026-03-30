@@ -58,10 +58,24 @@ class BillingService:
     def _insert_row(self, table: str, payload: Dict[str, Any]) -> Any:
         return self._supabase().table(table).insert(payload).execute()
 
+    def _generate_invite_code(self) -> str:
+        for _ in range(12):
+            candidate = uuid4().hex[:8].upper()
+            if not self._select_first("profiles", "user_id", invite_code=candidate):
+                return candidate
+        raise HTTPException(status_code=500, detail="Failed to allocate invite code")
+
     def _ensure_profile(self, user: AuthUser) -> None:
-        if self._select_first("profiles", "user_id, invite_code", user_id=user.id):
+        existing = self._select_first("profiles", "user_id, invite_code", user_id=user.id)
+        if existing:
             return
-        self._insert_row("profiles", {"user_id": user.id})
+        self._insert_row(
+            "profiles",
+            {
+                "user_id": user.id,
+                "invite_code": self._generate_invite_code(),
+            },
+        )
 
     def _append_ledger(
         self,
@@ -134,7 +148,7 @@ class BillingService:
 
     def _quota_from_guest(self, guest_id: Optional[str]) -> Dict[str, Any]:
         if not guest_id:
-            raise HTTPException(status_code=400, detail="X-Guest-Id is required for anonymous quota operations")
+            raise HTTPException(status_code=400, detail="Unable to determine anonymous quota bucket")
 
         daily_limit = int(self._billing_config().get("guest_daily_limit", 15))
         used = self.guest_quota_service.get_usage(guest_id)
@@ -190,6 +204,7 @@ class BillingService:
         user: Optional[AuthUser],
         guest_id: Optional[str],
         amount: Optional[int] = None,
+        event_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         requested_amount = max(1, int(amount or get_workflow_cost(workflow_type, default=1)))
         if user and getattr(user, "is_anonymous", False) and not guest_id:
@@ -207,6 +222,16 @@ class BillingService:
 
             self._bootstrap_user(user)
             self._grant_daily_points_if_needed(user)
+            if event_key and self._select_first("points_ledger", "id", event_key=event_key):
+                remaining = self._get_balance(user.id)
+                return {
+                    "success": True,
+                    "workflow_type": workflow_type,
+                    "amount": 0,
+                    "remaining": remaining,
+                    "billing_mode": "free",
+                    "deduplicated": True,
+                }
             balance = self._get_balance(user.id)
             if balance < requested_amount:
                 raise HTTPException(status_code=402, detail="Insufficient points")
@@ -214,7 +239,7 @@ class BillingService:
                 user_id=user.id,
                 points=-requested_amount,
                 reason=f"workflow_{workflow_type}",
-                event_key=f"workflow_{workflow_type}_{user.id}_{uuid4().hex}",
+                event_key=event_key or f"workflow_{workflow_type}_{user.id}_{uuid4().hex}",
             )
             remaining = self._get_balance(user.id)
             return {

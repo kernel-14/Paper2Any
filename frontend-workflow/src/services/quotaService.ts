@@ -65,6 +65,11 @@ export async function recordUsage(
   workflowType: string,
   options: RecordUsageOptions = {}
 ): Promise<boolean> {
+  await fetchRuntimeConfig().catch(() => undefined);
+  if (getRuntimeConfigSync().server_side_billing_enforced) {
+    return true;
+  }
+
   const amount = Math.max(1, options.amount ?? 1);
 
   try {

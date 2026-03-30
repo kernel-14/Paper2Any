@@ -10,9 +10,9 @@
  *   }
  */
 
-import { API_KEY } from '../config/api';
 import { checkQuota, recordUsage, QuotaInfo } from './quotaService';
 import { uploadAndSaveFile } from './fileService';
+import { backendFetch } from './backendClient';
 
 export interface WorkflowResult {
   success: boolean;
@@ -80,9 +80,7 @@ export async function callWorkflow(
 
   // 2. Call API with API key
   try {
-    const headers: HeadersInit = {
-      'X-API-Key': API_KEY,
-    };
+    const headers: HeadersInit = {};
 
     // Don't set Content-Type for FormData - browser will set it with boundary
     const isFormData = body instanceof FormData;
@@ -90,7 +88,7 @@ export async function callWorkflow(
       headers['Content-Type'] = 'application/json';
     }
 
-    const response = await fetch(url, {
+    const response = await backendFetch(url, {
       method: 'POST',
       headers,
       body: isFormData ? body : JSON.stringify(body),

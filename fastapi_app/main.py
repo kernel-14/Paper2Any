@@ -31,6 +31,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from fastapi_app.config import settings
 from fastapi_app.routers import account
 from fastapi_app.routers import paper2video
 from fastapi_app.routers import paper2any, paper2citation, paper2ppt, paper2poster
@@ -43,6 +44,13 @@ from dataflow_agent.utils import get_project_root
 from dataflow_agent.logger import get_logger
 
 log = get_logger(__name__)
+
+
+def _parse_cors_allow_origins(raw_value: str) -> list[str]:
+    raw = (raw_value or "").strip()
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def create_app() -> FastAPI:
@@ -60,10 +68,13 @@ def create_app() -> FastAPI:
         description="HTTP API wrapper for dataflow_agent.workflow.* pipelines",
     )
 
+    allow_origins = _parse_cors_allow_origins(settings.CORS_ALLOW_ORIGINS)
+    allow_credentials = bool(allow_origins) and "*" not in allow_origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=allow_origins,
+        allow_origin_regex=settings.CORS_ALLOW_ORIGIN_REGEX or None,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
