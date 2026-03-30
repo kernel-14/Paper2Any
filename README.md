@@ -126,17 +126,37 @@ Paper2Any currently includes the following sub-capabilities:
 
 <div align="center">
 
+<table>
+  <tr>
+    <td width="33%" align="center" valign="top">
+      <img src="static/new_readme/drawio/image-to-drawio-upload.png" width="100%"/>
+      <br><sub>✨ Upload a paper figure or screenshot as the starting point</sub>
+    </td>
+    <td width="34%" align="center" valign="top">
+      <img src="static/new_readme/drawio/image-to-drawio-source.png" width="100%"/>
+      <br><sub>✨ Keep the source structure visible before conversion</sub>
+    </td>
+    <td width="33%" align="center" valign="top">
+      <img src="static/new_readme/drawio/image-to-drawio-editor.gif" width="100%"/>
+      <br><sub>✨ Convert the image into an editable DrawIO canvas</sub>
+    </td>
+  </tr>
+</table>
+
 <br>
-<img src="static/new_readme/drawio/drawio-1.gif" width="90%"/>
-<br><sub>✨ Diagram generation (mindmap / flowchart / ER ...)</sub>
 
-<br><br>
-<img src="static/new_readme/drawio/drawio-2.gif" width="90%"/>
-<br><sub>✨ Model diagrams from PDF or text (research figure generation)</sub>
-
-<br><br>
-<img src="static/new_readme/drawio/image-to-editable.png" width="90%"/>
-<br><sub>✨ Image to editable DrawIO diagram</sub>
+<table>
+  <tr>
+    <td width="48%" align="center" valign="top">
+      <img src="static/new_readme/drawio/framework-drawio-workbench.png" width="100%"/>
+      <br><sub>✨ Generate a model or system diagram directly inside the DrawIO workbench</sub>
+    </td>
+    <td width="52%" align="center" valign="top">
+      <img src="static/new_readme/drawio/framework-drawio-editor.gif" width="100%"/>
+      <br><sub>✨ Refine the generated architecture with chat editing and export-ready layout</sub>
+    </td>
+  </tr>
+</table>
 
 </div>
 
@@ -192,37 +212,57 @@ Paper2Any currently includes the following sub-capabilities:
 
 <div align="center">
 
-<br>
-<img src="static/new_readme/paper2ppt/demo.gif" width="85%"/>
-<br><sub>✨ PPT Generation Demo</sub>
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="static/new_readme/paper2ppt/demo.gif" width="100%"/>
+      <br><sub>✨ End-to-end PPT generation demo</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="static/new_readme/paper2ppt/case-1.png" width="100%"/>
+      <br><sub>✨ Paper / text / topic to polished slide deck</sub>
+    </td>
+  </tr>
+</table>
 
 <br>
-<img src="static/new_readme/paper2ppt/case-1.png" width="90%"/>
-<br><sub>✨ Paper / Text / Topic → PPT</sub>
 
-<br><br>
-<img src="static/new_readme/paper2ppt/frontend-gallery.png" width="90%"/>
-<br><sub>✨ Editable frontend deck overview with generated multi-page gallery and screenshot-ready export flow</sub>
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="static/new_readme/paper2ppt/frontend-canvas-edit.gif" width="100%"/>
+      <br><sub>✨ Edit slide text directly on canvas while keeping the deck theme locked</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="static/new_readme/paper2ppt/frontend-gallery-review.gif" width="100%"/>
+      <br><sub>✨ Review the generated multi-page gallery before export</sub>
+    </td>
+  </tr>
+</table>
 
-<br><br>
-<img src="static/new_readme/paper2ppt/frontend-editor.png" width="90%"/>
-<br><sub>✨ Canvas editing workspace with deck theme lock, inline text editing, and manual visual QA / repair</sub>
+<br>
 
-<br><br>
-<img src="static/new_readme/paper2ppt/long-doc.png" width="85%"/>
-<br><sub>✨ Long Document Support (40+ Slides)</sub>
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="static/new_readme/paper2ppt/outline-assist-panel.png" width="100%"/>
+      <br><sub>✨ AI-assisted outline refinement with targeted rewrite prompts</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="static/new_readme/paper2ppt/outline-assist-detail.png" width="100%"/>
+      <br><sub>✨ Structured outline editing down to section and bullet detail</sub>
+    </td>
+  </tr>
+</table>
 
-<br><br>
-<img src="static/new_readme/paper2ppt/table-extraction.png" width="90%"/>
-<br><sub>✨ Intelligent Table Extraction & Insertion</sub>
+<br>
 
-<br><br>
-<img src="static/new_readme/paper2ppt/outline-edit.png" width="90%"/>
-<br><sub>✨ AI-Assisted Outline Editing</sub>
-
-<br><br>
-<img src="static/new_readme/paper2ppt/version-history.png" width="90%"/>
-<br><sub>✨ Version History Management</sub>
+<img src="static/new_readme/paper2ppt/long-doc.png" width="78%"/>
+<br>
+<img src="static/new_readme/paper2ppt/table-extraction.png" width="80%"/>
+<br>
+<img src="static/new_readme/paper2ppt/version-history.png" width="80%"/>
+<br><sub>✨ Long document support for 40+ slides · Intelligent table extraction and insertion · Version history and iterative deck management</sub>
 
 </div>
 
