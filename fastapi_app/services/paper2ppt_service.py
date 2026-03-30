@@ -478,7 +478,53 @@ class Paper2PPTService:
         else:
             normalized.setdefault("all_output_files", [])
 
+        failed_pages = self._collect_failed_pages(normalized.get("pagecontent", []))
+        if failed_pages:
+            normalized["failed_pages"] = failed_pages
+            normalized["failed_page_indices"] = [item["page_idx"] for item in failed_pages]
+            normalized["partial_success"] = any(
+                isinstance(item, dict) and str(item.get("generated_img_path") or "").strip()
+                for item in normalized.get("pagecontent", [])
+            )
+        else:
+            normalized.setdefault("failed_pages", [])
+            normalized.setdefault("failed_page_indices", [])
+            normalized.setdefault("partial_success", False)
+
         return normalized
+
+    def _collect_failed_pages(self, pagecontent: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        failed_pages: List[Dict[str, Any]] = []
+        for fallback_idx, item in enumerate(pagecontent or []):
+            if not isinstance(item, dict):
+                continue
+
+            tracked = any(key in item for key in ("generated_img_path", "page_idx", "mode", "error"))
+            if not tracked:
+                continue
+
+            generated_img_path = str(item.get("generated_img_path") or "").strip()
+            if generated_img_path:
+                continue
+
+            page_idx_raw = item.get("page_idx", fallback_idx)
+            try:
+                page_idx = int(page_idx_raw)
+            except (TypeError, ValueError):
+                page_idx = fallback_idx
+
+            error_text = str(item.get("error") or "").strip()
+            mode_text = str(item.get("mode") or "").strip()
+            failed_pages.append(
+                {
+                    "page_idx": page_idx,
+                    "reason": error_text or mode_text or "generated image missing",
+                    "mode": mode_text,
+                    "error": error_text,
+                }
+            )
+
+        return failed_pages
 
     def _convert_pagecontent_paths_to_urls(
         self,

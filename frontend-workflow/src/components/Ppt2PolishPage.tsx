@@ -63,11 +63,24 @@ interface BeautifyResult {
   slideId: string;
   beforeImage: string;
   afterImage: string;
-  status: 'pending' | 'processing' | 'done';
+  status: 'pending' | 'processing' | 'done' | 'failed';
+  errorMessage?: string;
   userPrompt?: string;
   versionHistory: ImageVersion[];
   currentVersionIndex: number;
 }
+
+interface FailedPageInfo {
+  page_idx?: number;
+  reason?: string;
+  error?: string;
+  mode?: string;
+}
+
+const getFailedPageNumbers = (results: BeautifyResult[]): number[] =>
+  results
+    .map((result, index) => (result.status === 'failed' || !result.afterImage ? index + 1 : null))
+    .filter((value): value is number => value !== null);
 
 // ============== 假数据模拟 ==============
 // 模拟后端返回的数据（转换为前端格式）
@@ -747,11 +760,7 @@ const Ppt2PolishPage = () => {
           generateInitialPPT(convertedSlides, results, currentResultPath)
             .then((updatedResults) => {
               console.log('批量美化完成');
-              const finalResults = updatedResults.map(res => ({
-                ...res,
-                status: 'done' as const
-              }));
-              setBeautifyResults(finalResults);
+              setBeautifyResults(updatedResults);
             })
             .catch((err) => {
               console.error("Batch generation failed:", err);
@@ -864,12 +873,7 @@ const Ppt2PolishPage = () => {
       // 传入 outlineData，因为 generateInitialPPT 内部需要用它来构建 pagecontent
       const updatedResults = await generateInitialPPT(outlineData, results);
       
-      // 更新结果状态，将状态标记为 done
-      const finalResults = updatedResults.map(res => ({
-        ...res,
-        status: 'done' as const // 显式类型断言
-      }));
-      setBeautifyResults(finalResults);
+      setBeautifyResults(updatedResults);
     } catch (error) {
       console.error("Batch generation failed:", error);
       // 错误已在 generateInitialPPT 中通过 setError 处理，这里只需确保 loading 状态结束
@@ -945,18 +949,38 @@ const Ppt2PolishPage = () => {
       if (!data.success) {
         throw new Error(data.error || '服务器繁忙，请稍后再试');
       }
+
+      const responsePagecontent = Array.isArray(data.pagecontent) ? data.pagecontent : [];
+      const failedPages = Array.isArray(data.failed_pages) ? data.failed_pages as FailedPageInfo[] : [];
+      const failedReasonByIndex = new Map<number, string>();
+      failedPages.forEach((item) => {
+        const pageIdx = Number(item?.page_idx);
+        if (!Number.isInteger(pageIdx) || pageIdx < 0) {
+          return;
+        }
+        const reason = String(item?.reason || item?.error || item?.mode || '该页生成失败，请重试').trim();
+        failedReasonByIndex.set(pageIdx, reason || '该页生成失败，请重试');
+      });
       
       // 更新美化结果，使用生成的 ppt_pages/page_*.png 作为 afterImage
       let updatedResults = initialResults;
       if (data.all_output_files) {
         updatedResults = initialResults.map((result, index) => {
+          const pageMeta = responsePagecontent[index] && typeof responsePagecontent[index] === 'object'
+            ? responsePagecontent[index]
+            : null;
           const pageImageUrl = data.all_output_files.find((url: string) => 
             url.includes(`page_${String(index).padStart(3, '0')}.png`)
-          );
+          ) || (typeof pageMeta?.generated_img_path === 'string' ? pageMeta.generated_img_path : '');
+          const pageFailureReason = failedReasonByIndex.get(index)
+            || String(pageMeta?.error || pageMeta?.mode || '').trim()
+            || '该页生成失败，请点击“重新生成”重试';
           return {
             ...result,
             // beforeImage 保持原始 PPT 截图
             afterImage: pageImageUrl || '',
+            status: pageImageUrl ? 'done' : 'failed',
+            errorMessage: pageImageUrl ? undefined : pageFailureReason,
           };
         });
         setBeautifyResults(updatedResults);
@@ -981,6 +1005,13 @@ const Ppt2PolishPage = () => {
             img.src = url;
           }
         });
+      }
+
+      const failedPageNumbers = getFailedPageNumbers(updatedResults);
+      if (failedPageNumbers.length > 0) {
+        setError(`批量美化已完成，但第 ${failedPageNumbers.join('、')} 页生成失败，请点“重新生成”重试。`);
+      } else {
+        setError(null);
       }
       await consumeQuotaForAction(
         'ppt2polish',
@@ -1094,6 +1125,17 @@ const Ppt2PolishPage = () => {
       if (!data.success) {
         throw new Error(data.error || '服务器繁忙，请稍后再试');
       }
+
+      const responsePagecontent = Array.isArray(data.pagecontent) ? data.pagecontent : [];
+      const currentPageMeta = responsePagecontent.find((item: any, itemIndex: number) => {
+        const pageIdx = Number(item?.page_idx);
+        if (Number.isInteger(pageIdx)) {
+          return pageIdx === index;
+        }
+        return itemIndex === index;
+      });
+      const failedPages = Array.isArray(data.failed_pages) ? data.failed_pages as FailedPageInfo[] : [];
+      const currentFailedPage = failedPages.find((item) => Number(item?.page_idx) === index);
       
       // 从 all_output_files 中找到对应的页面图片
       // 优先匹配美化后的图 (ppt_pages/page_xxx.png)，其次才是原图 (ppt_images/slide_xxx.png)
@@ -1103,7 +1145,8 @@ const Ppt2PolishPage = () => {
       console.log('查找原图模式:', slidePattern);
       
       // 先找美化后的图
-      let pageImageUrl = data.all_output_files?.find((url: string) => url.includes(pagePattern));
+      let pageImageUrl = data.all_output_files?.find((url: string) => url.includes(pagePattern))
+        || (typeof currentPageMeta?.generated_img_path === 'string' ? currentPageMeta.generated_img_path : '');
       console.log('美化后图片 URL:', pageImageUrl);
       
       // 如果没有美化后的图，再找原图作为 fallback
@@ -1118,14 +1161,35 @@ const Ppt2PolishPage = () => {
       }
       
       console.log('最终使用的图片 URL:', pageImageUrl);
+
+      if (!pageImageUrl) {
+        const failureReason = String(
+          currentFailedPage?.reason
+          || currentFailedPage?.error
+          || currentFailedPage?.mode
+          || currentPageMeta?.error
+          || currentPageMeta?.mode
+          || '该页生成失败，请稍后重试'
+        ).trim();
+        updatedResults[index] = {
+          ...updatedResults[index],
+          status: updatedResults[index].afterImage ? 'done' : 'failed',
+          errorMessage: failureReason || '该页生成失败，请稍后重试',
+        };
+        setBeautifyResults(updatedResults);
+        setError(`第 ${index + 1} 页生成失败：${failureReason || '请稍后重试'}`);
+        return false;
+      }
       
       updatedResults[index] = {
         ...updatedResults[index],
         status: 'done',
         afterImage: pageImageUrl || updatedResults[index].afterImage,
+        errorMessage: undefined,
         userPrompt: slidePrompt || undefined,
       };
       setBeautifyResults(updatedResults);
+      setError(null);
 
       // 获取更新的版本历史
       await fetchVersionHistory(index);
@@ -1133,7 +1197,11 @@ const Ppt2PolishPage = () => {
     } catch (err) {
       const message = err instanceof Error ? err.message : '服务器繁忙，请稍后再试';
       setError(message);
-      updatedResults[index] = { ...updatedResults[index], status: 'pending' };
+      updatedResults[index] = {
+        ...updatedResults[index],
+        status: updatedResults[index].afterImage ? 'done' : 'failed',
+        errorMessage: message,
+      };
       setBeautifyResults(updatedResults);
       return false;
     } finally {
@@ -1148,6 +1216,11 @@ const Ppt2PolishPage = () => {
       setSlidePrompt('');
       // 移除自动美化逻辑，因为现在是预先批量生成好了
     } else {
+      const failedPageNumbers = getFailedPageNumbers(beautifyResults);
+      if (failedPageNumbers.length > 0) {
+        setError(`第 ${failedPageNumbers.join('、')} 页仍未生成成功，请先重试这些页面再导出。`);
+        return;
+      }
       setCurrentStep('complete');
     }
   };
@@ -1950,8 +2023,13 @@ const Ppt2PolishPage = () => {
           <p className="text-gray-400">{t('beautify.pageInfo', { current: currentSlideIndex + 1, total: outlineData.length, title: currentSlide?.title })}</p>
           <p className="text-xs text-gray-500 mt-1">{t('beautify.modeInfo')}</p>
         </div>
+        {error && (
+          <div className="mb-6 flex items-center gap-2 text-sm text-red-300 bg-red-500/10 border border-red-500/40 rounded-lg px-4 py-3">
+            <AlertCircle size={16} /> {error}
+          </div>
+        )}
         <div className="mb-6">
-          <div className="flex gap-1">{beautifyResults.map((result, index) => (<div key={result.slideId} className={`flex-1 h-2 rounded-full transition-all ${result.status === 'done' ? 'bg-teal-400' : result.status === 'processing' ? 'bg-gradient-to-r from-cyan-400 to-teal-400 animate-pulse' : index === currentSlideIndex ? 'bg-teal-400/50' : 'bg-white/10'}`} />))}</div>
+          <div className="flex gap-1">{beautifyResults.map((result, index) => (<div key={result.slideId} className={`flex-1 h-2 rounded-full transition-all ${result.status === 'done' ? 'bg-teal-400' : result.status === 'failed' ? 'bg-red-400' : result.status === 'processing' ? 'bg-gradient-to-r from-cyan-400 to-teal-400 animate-pulse' : index === currentSlideIndex ? 'bg-teal-400/50' : 'bg-white/10'}`} />))}</div>
         </div>
         <div className="glass rounded-xl border border-white/10 p-6 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1961,7 +2039,7 @@ const Ppt2PolishPage = () => {
             </div>
             <div>
               <h4 className="text-sm text-gray-400 mb-3 flex items-center gap-2"><Sparkles size={14} className="text-teal-400" /> {t('beautify.result')}</h4>
-              <div className="rounded-lg overflow-hidden border border-teal-500/30 aspect-[16/9] bg-gradient-to-br from-cyan-500/10 to-teal-500/10 flex items-center justify-center">{isBeautifying ? <div className="text-center"><Loader2 size={32} className="text-teal-400 animate-spin mx-auto mb-2" /><p className="text-sm text-teal-300">{t('beautify.processing')}</p></div> : currentResult?.afterImage ? <img src={currentResult.afterImage} alt="After" className="max-w-full max-h-full object-contain" /> : <span className="text-gray-500">{t('beautify.waiting')}</span>}</div>
+              <div className="rounded-lg overflow-hidden border border-teal-500/30 aspect-[16/9] bg-gradient-to-br from-cyan-500/10 to-teal-500/10 flex items-center justify-center">{isBeautifying ? <div className="text-center"><Loader2 size={32} className="text-teal-400 animate-spin mx-auto mb-2" /><p className="text-sm text-teal-300">{t('beautify.processing')}</p></div> : currentResult?.afterImage ? <img src={currentResult.afterImage} alt="After" className="max-w-full max-h-full object-contain" /> : currentResult?.status === 'failed' ? <div className="text-center px-6"><AlertCircle size={28} className="text-red-300 mx-auto mb-2" /><p className="text-sm text-red-200 mb-1">该页生成失败</p><p className="text-xs text-red-200/80">{currentResult.errorMessage || '请点击“重新生成”重试'}</p></div> : <span className="text-gray-500">{t('beautify.waiting')}</span>}</div>
             </div>
           </div>
         </div>
@@ -1994,7 +2072,7 @@ const Ppt2PolishPage = () => {
             >
               <ArrowLeft size={18} /> {t('beautify.prev')}
             </button>
-            <button onClick={handleConfirmSlide} disabled={isBeautifying || !currentResult?.afterImage} className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-700 hover:to-teal-700 text-white font-semibold flex items-center gap-2 transition-all disabled:opacity-50"><CheckCircle2 size={18} /> {t('beautify.next')}</button>
+            <button onClick={handleConfirmSlide} disabled={isBeautifying} className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-700 hover:to-teal-700 text-white font-semibold flex items-center gap-2 transition-all disabled:opacity-50"><CheckCircle2 size={18} /> {t('beautify.next')}</button>
           </div>
         </div>
       </div>

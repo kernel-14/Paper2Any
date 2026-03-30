@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -17,10 +20,12 @@ from fastapi_app.schemas import (
     PPTGenerationRequest,
 )
 from dataflow_agent.utils.version_manager import ImageVersionManager
+from fastapi_app.services.billing_service import BillingService
 from fastapi_app.utils import _to_outputs_url, resolve_outputs_path
 
 # 注意：prefix 由 main.py 统一加 "/api/paper2ppt"
 router = APIRouter(tags=["paper2ppt"])
+_SYNC_SUBMISSION_WINDOW_SECONDS = 20
 
 
 def get_service() -> Paper2PPTService:
@@ -39,6 +44,129 @@ def get_frontend_service() -> Paper2PPTFrontendService:
     from fastapi_app.services.paper2ppt_frontend_service import Paper2PPTFrontendService
 
     return Paper2PPTFrontendService()
+
+
+def _is_truthy(raw: Any) -> bool:
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _pagecontent_count(raw: Any) -> int:
+    text = str(raw or "").strip()
+    if not text:
+        return 0
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return 0
+    return len(payload) if isinstance(payload, list) else 0
+
+
+def _build_submission_key(payload: Dict[str, Any]) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _build_authenticated_event_key(
+    request: Request,
+    workflow_type: str,
+    submission_key: str,
+) -> Optional[str]:
+    user = getattr(request.state, "auth_user", None)
+    if not user or getattr(user, "is_anonymous", False):
+        return None
+    user_id = str(getattr(user, "id", "") or "").strip()
+    if not user_id:
+        return None
+    time_bucket = int(time.time() // _SYNC_SUBMISSION_WINDOW_SECONDS)
+    return f"workflow_{workflow_type}_{user_id}_{time_bucket}_{submission_key}"
+
+
+def _consume_workflow_before_execute(
+    request: Request,
+    *,
+    workflow_type: str,
+    amount: int,
+    submission_payload: Dict[str, Any],
+) -> None:
+    submission_key = _build_submission_key(submission_payload)
+    event_key = _build_authenticated_event_key(request, workflow_type, submission_key)
+    BillingService().consume_workflow(
+        workflow_type=workflow_type,
+        amount=max(1, int(amount)),
+        user=getattr(request.state, "auth_user", None),
+        guest_id=getattr(request.state, "guest_id", None),
+        event_key=event_key,
+    )
+
+
+def _consume_paper2ppt_generate_charge(request: Request, req: PPTGenerationRequest) -> None:
+    if _is_truthy(req.all_edited_down):
+        return
+
+    get_down = _is_truthy(req.get_down)
+    if get_down:
+        if req.page_id is None or not str(req.edit_prompt or "").strip():
+            return
+        amount = 1
+    else:
+        amount = _pagecontent_count(req.pagecontent)
+        if amount <= 0:
+            return
+
+    payload = {
+        "path": "/api/v1/paper2ppt/generate",
+        "result_path": str(req.result_path or "").strip(),
+        "pagecontent": str(req.pagecontent or "").strip(),
+        "get_down": get_down,
+        "all_edited_down": _is_truthy(req.all_edited_down),
+        "page_id": req.page_id,
+        "edit_prompt": str(req.edit_prompt or "").strip(),
+        "style": str(req.style or "").strip(),
+        "model": str(req.model or "").strip(),
+        "language": str(req.language or "").strip(),
+        "aspect_ratio": str(req.aspect_ratio or "").strip(),
+        "img_gen_model_name": str(req.img_gen_model_name or "").strip(),
+        "image_resolution": str(req.image_resolution or "").strip(),
+    }
+    _consume_workflow_before_execute(
+        request,
+        workflow_type="paper2ppt",
+        amount=amount,
+        submission_payload=payload,
+    )
+
+
+def _consume_paper2ppt_frontend_charge(request: Request, req: FrontendPPTGenerationRequest) -> None:
+    pagecontent_count = _pagecontent_count(req.pagecontent)
+    if pagecontent_count <= 0:
+        return
+
+    if req.page_id is not None:
+        amount = 1
+    else:
+        per_page = 2 if bool(req.include_images) else 1
+        amount = max(1, pagecontent_count * per_page)
+
+    payload = {
+        "path": "/api/v1/paper2ppt/frontend/generate",
+        "result_path": str(req.result_path or "").strip(),
+        "pagecontent": str(req.pagecontent or "").strip(),
+        "page_id": req.page_id,
+        "edit_prompt": str(req.edit_prompt or "").strip(),
+        "current_slide": str(req.current_slide or "").strip(),
+        "style": str(req.style or "").strip(),
+        "model": str(req.model or "").strip(),
+        "language": str(req.language or "").strip(),
+        "include_images": bool(req.include_images),
+        "image_style": str(req.image_style or "").strip(),
+        "image_model": str(req.image_model or "").strip(),
+    }
+    _consume_workflow_before_execute(
+        request,
+        workflow_type="paper2ppt",
+        amount=amount,
+        submission_payload=payload,
+    )
 
 
 @router.post(
@@ -157,6 +285,8 @@ async def paper2ppt_ppt_json(
         edit_prompt=edit_prompt,
         image_resolution=image_resolution,
     )
+
+    _consume_paper2ppt_generate_charge(request, req)
 
     data = await service.generate_ppt(
         req=req,
@@ -301,6 +431,7 @@ async def paper2ppt_frontend_generate(
         edit_prompt=edit_prompt,
         current_slide=current_slide,
     )
+    _consume_paper2ppt_frontend_charge(request, req)
     return await service.generate_slides(req=req, request=request)
 
 

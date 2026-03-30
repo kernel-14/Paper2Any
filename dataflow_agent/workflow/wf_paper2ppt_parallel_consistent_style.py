@@ -21,6 +21,7 @@ from dataflow_agent.toolkits.multimodaltool.req_img import (
 from dataflow_agent.toolkits.multimodaltool.ppt_tool import convert_images_dir_to_pdf_and_full_slide_ppt
 
 log = get_logger(__name__)
+DEFAULT_PARALLEL_LIMIT = 3
 
 
 def _ensure_result_path(state: Paper2FigureState) -> str:
@@ -50,6 +51,15 @@ def _abs_path(p: str) -> str:
         return str(Path(p).expanduser().resolve())
     except Exception:
         return p
+
+
+def _get_parallel_limit(page_count: int) -> int:
+    raw = str(os.getenv("PAPER2PPT_PARALLEL_CONSISTENT_MAX_CONCURRENCY", "")).strip()
+    try:
+        configured = int(raw) if raw else DEFAULT_PARALLEL_LIMIT
+    except ValueError:
+        configured = DEFAULT_PARALLEL_LIMIT
+    return max(1, min(page_count, configured))
 
 
 def _is_table_asset(asset_ref: Optional[str]) -> bool:
@@ -245,10 +255,18 @@ def create_paper2ppt_parallel_consistent_graph() -> GenericGraphBuilder:  # noqa
                     return True
                 except Exception as e:  # noqa: BLE001
                     last_err = e
-                    log.error(f"[paper2ppt] image gen failed attempt {attempt}/{retries}: {e}")
+                    err_text = str(e)
+                    is_rate_limited = "429" in err_text or "Too Many Requests" in err_text
+                    sleep_for = delay * (2 ** (attempt - 1))
+                    if is_rate_limited:
+                        sleep_for = max(sleep_for, 8.0 * attempt)
+                    log.error(
+                        f"[paper2ppt] image gen failed attempt {attempt}/{retries}: {e}. "
+                        f"retry_in={sleep_for:.1f}s"
+                    )
                     if attempt < retries:
                         try:
-                            await asyncio.sleep(delay)
+                            await asyncio.sleep(sleep_for)
                         except Exception:
                             pass
             log.error(f"[paper2ppt] image gen failed after {retries} attempts. last_err={last_err}")
@@ -481,13 +499,26 @@ def create_paper2ppt_parallel_consistent_graph() -> GenericGraphBuilder:  # noqa
         # --- Execution Flow ---
         
         results_map = {}
+        parallel_limit = _get_parallel_limit(len(page_items))
+        semaphore = asyncio.Semaphore(parallel_limit)
+
+        async def _process_single_page_with_limit(
+            idx: int,
+            item: Any,
+            ref_img_path: Optional[str] = None,
+        ) -> Dict[str, Any]:
+            async with semaphore:
+                return await _process_single_page(idx, item, ref_img_path=ref_img_path)
         
         # 场景 A: 用户提供了参考图 (ref_img) -> 全量并行
         if user_ref_img:
-            log.info(f"[paper2ppt_consistent] User ref_img provided. Processing all {len(page_items)} pages in parallel...")
+            log.info(
+                f"[paper2ppt_consistent] User ref_img provided. Processing all {len(page_items)} pages "
+                f"with parallel_limit={parallel_limit}..."
+            )
             tasks = []
             for idx in range(len(page_items)):
-                tasks.append(_process_single_page(idx, page_items[idx], ref_img_path=user_ref_img))
+                tasks.append(_process_single_page_with_limit(idx, page_items[idx], ref_img_path=user_ref_img))
             
             t_start = time.time()
             all_results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -522,9 +553,12 @@ def create_paper2ppt_parallel_consistent_graph() -> GenericGraphBuilder:  # noqa
             if len(page_items) > 1:
                 tasks = []
                 for idx in range(1, len(page_items)):
-                    tasks.append(_process_single_page(idx, page_items[idx], ref_img_path=anchor_img_path))
+                    tasks.append(_process_single_page_with_limit(idx, page_items[idx], ref_img_path=anchor_img_path))
                 
-                log.info(f"[paper2ppt_consistent] Generating remaining {len(tasks)} pages concurrently...")
+                log.info(
+                    f"[paper2ppt_consistent] Generating remaining {len(tasks)} pages "
+                    f"with parallel_limit={parallel_limit}..."
+                )
                 t_rest_start = time.time()
                 rest_results = await asyncio.gather(*tasks, return_exceptions=True)
                 log.info(f"[paper2ppt_consistent] Remaining pages done in {time.time()-t_rest_start:.2f}s")

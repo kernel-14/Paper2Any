@@ -251,27 +251,17 @@ async def _resolve_workflow_charge_decision(
         amount = _resolve_requested_amount(request, workflow_guard.workflow_type)
         return WorkflowChargeDecision(workflow_type=workflow_guard.workflow_type, amount=amount)
 
-    # /generate-task uses multipart uploads. Reading request.form() in middleware
-    # consumes the body and breaks FastAPI's downstream form validation.
-    # This route now performs billing and dedupe in the task service itself.
-    if path == "/api/v1/paper2ppt/generate-task":
+    # These routes use form payloads that must remain available to FastAPI's
+    # downstream parsing. Route/task services now handle billing and dedupe
+    # after parameter binding succeeds.
+    if path in {
+        "/api/v1/paper2ppt/generate",
+        "/api/v1/paper2ppt/generate-task",
+        "/api/v1/paper2ppt/frontend/generate",
+    }:
         return None
 
     form = await request.form()
-
-    if path == "/api/v1/paper2ppt/generate":
-        if _is_truthy(form.get("all_edited_down")):
-            return None
-
-        get_down = _is_truthy(form.get("get_down"))
-        amount = _resolve_requested_amount(request, workflow_guard.workflow_type)
-        if amount is None:
-            amount = 1 if get_down else _pagecontent_count(form.get("pagecontent"))
-
-        return WorkflowChargeDecision(
-            workflow_type=workflow_guard.workflow_type,
-            amount=max(1, int(amount or 1)),
-        )
 
     if path == "/api/v1/paper2ppt/frontend/generate":
         page_id = _coerce_int(form.get("page_id"))
