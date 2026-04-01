@@ -227,7 +227,7 @@ class Paper2PPTTaskService:
         guest_id = getattr(request.state, "guest_id", None)
 
         event_key = None
-        if user and not getattr(user, "is_anonymous", False) and submission_key:
+        if user and submission_key:
             time_bucket = int(time.time() // _SUBMISSION_WINDOW_SECONDS)
             event_key = f"workflow_paper2ppt_{user.id}_{time_bucket}_{submission_key}"
 

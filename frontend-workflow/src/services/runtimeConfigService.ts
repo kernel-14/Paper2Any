@@ -14,6 +14,8 @@ export interface RuntimeConfig {
   daily_grant_balance_cap: number;
   referral_inviter_points: number;
   referral_invitee_points: number;
+  points_purchase_url: string;
+  points_redeem_enabled: boolean;
 }
 
 const STORAGE_KEY = 'paper2any_runtime_config';
@@ -25,12 +27,14 @@ const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
   managed_api_url: DEFAULT_LLM_API_URL,
   server_side_billing_enforced: false,
   workflow_costs: {},
-  guest_daily_limit: 15,
-  signup_bonus_points: 20,
-  daily_grant_points: 10,
-  daily_grant_balance_cap: 30,
+  guest_daily_limit: 0,
+  signup_bonus_points: 0,
+  daily_grant_points: 5,
+  daily_grant_balance_cap: 15,
   referral_inviter_points: 5,
   referral_invitee_points: 0,
+  points_purchase_url: '',
+  points_redeem_enabled: false,
 };
 
 let runtimeConfigCache: RuntimeConfig | null = null;

@@ -300,7 +300,7 @@ const Paper2VideoPage = () => {
       setError(
         quota.isAuthenticated
           ? t('errors.quotaUserInsufficient', { count: videoGenerationCost })
-          : t('errors.quotaGuestInsufficient', { count: videoGenerationCost })
+          : t('errors.authRequired')
       );
       return;
     }

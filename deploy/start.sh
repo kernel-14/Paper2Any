@@ -217,6 +217,12 @@ start_cmd=(
 # 使用 setsid + nohup 彻底脱离当前 shell，避免多 worker 被会话一起带走。
 if command -v setsid >/dev/null 2>&1; then
   nohup setsid env \
+    HTTP_PROXY= \
+    HTTPS_PROXY= \
+    ALL_PROXY= \
+    http_proxy= \
+    https_proxy= \
+    all_proxy= \
     SAM3_SERVER_URLS="${SAM3_SERVER_URLS:-}" \
     SAM3_HOME="${SAM3_HOME:-}" \
     SAM3_CHECKPOINT_PATH="${SAM3_CHECKPOINT_PATH:-}" \
@@ -227,6 +233,12 @@ if command -v setsid >/dev/null 2>&1; then
     "${start_cmd[@]}" >> "$LOG_DIR/app.log" 2>&1 < /dev/null &
 else
   nohup env \
+    HTTP_PROXY= \
+    HTTPS_PROXY= \
+    ALL_PROXY= \
+    http_proxy= \
+    https_proxy= \
+    all_proxy= \
     SAM3_SERVER_URLS="${SAM3_SERVER_URLS:-}" \
     SAM3_HOME="${SAM3_HOME:-}" \
     SAM3_CHECKPOINT_PATH="${SAM3_CHECKPOINT_PATH:-}" \

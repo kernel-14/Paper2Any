@@ -520,7 +520,7 @@ class Paper2AnyService:
         """
         为一次请求创建独立目录：
         - 登录用户 (有 email): outputs/{email}/{task_type}/{timestamp}/
-        - 匿名用户 (无 email): outputs/{task_type}/{timestamp}_{short_uuid}/
+        - 无邮箱上下文时: outputs/{task_type}/{timestamp}_{short_uuid}/
         """
         ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
         
@@ -528,7 +528,7 @@ class Paper2AnyService:
             # 登录用户：邮箱/任务/时间戳
             run_dir = BASE_OUTPUT_DIR / email / task_type / ts
         else:
-            # 匿名用户：保持旧逻辑
+            # 无邮箱上下文：保持兼容目录结构
             rid = uuid.uuid4().hex[:6]
             run_dir = BASE_OUTPUT_DIR / task_type / f"{ts}_{rid}"
 

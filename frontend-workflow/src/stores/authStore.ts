@@ -37,7 +37,6 @@ interface AuthState {
   signInWithOAuth: (provider: Provider) => Promise<void>;
   linkOAuthIdentity: (provider: Provider) => Promise<void>;
   claimInviteCode: (inviteCode: string) => Promise<void>;
-  signInAnonymously: () => Promise<void>;
   signOut: () => Promise<void>;
   clearError: () => void;
   clearPendingVerification: () => void;
@@ -405,31 +404,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ loading: false });
   },
 
-  signInAnonymously: async () => {
-    if (!isSupabaseConfigured()) {
-      set({ error: "Supabase is not configured", loading: false });
-      return;
-    }
-
-    set({ loading: true, error: null });
-
-    const { data, error } = await supabase.auth.signInAnonymously();
-
-    if (error) {
-      set({ error: error.message, loading: false });
-      return;
-    }
-
-    set({
-      session: data.session,
-      user: data.user,
-      loading: false,
-    });
-
-    // Fetch quota for anonymous user
-    get().refreshQuota();
-  },
-
   signOut: async () => {
     if (!isSupabaseConfigured()) {
       set({ user: null, session: null, loading: false, quota: null });
@@ -464,8 +438,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // Import quota service and check quota directly
       const { checkQuota } = await import('../services/quotaService');
       const userId = session?.user?.id || null;
-      const isAnonymous = session?.user?.is_anonymous || false;
-      const quotaInfo = await checkQuota(userId, isAnonymous);
+      const quotaInfo = await checkQuota(userId);
 
       set({
         quota: {

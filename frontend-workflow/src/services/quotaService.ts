@@ -11,6 +11,7 @@ export interface QuotaInfo {
 
 export interface RecordUsageOptions {
   amount?: number;
+  // Kept only for backward-compatible call sites. Guest mode has been removed.
   isAnonymous?: boolean;
 }
 
@@ -25,13 +26,12 @@ function buildUnlimitedQuota(): QuotaInfo {
 }
 
 /**
- * Check current quota for a user.
+ * Check current quota for the active deployment mode.
  *
- * @param userId - Supabase user ID if logged in, null for anonymous
- * @param isAnonymous - Whether the user is an anonymous user (optional, defaults to false if userId exists)
- * @returns QuotaInfo with used, limit, and remaining counts
+ * - With Supabase configured, quota comes from the authenticated account.
+ * - Without Supabase, backend returns unlimited local usage.
  */
-export async function checkQuota(userId: string | null, isAnonymous: boolean = false): Promise<QuotaInfo> {
+export async function checkQuota(userId: string | null, _legacyIsAnonymous: boolean = false): Promise<QuotaInfo> {
   await fetchRuntimeConfig().catch(() => undefined);
   try {
     const response = await backendFetch('/api/v1/account/quota');
@@ -56,7 +56,7 @@ export async function checkQuota(userId: string | null, isAnonymous: boolean = f
 /**
  * Record a workflow usage.
  *
- * @param userId - Supabase user ID if logged in, null for anonymous
+ * @param userId - Supabase user ID if logged in
  * @param workflowType - Type of workflow used (e.g., 'paper2figure')
  * @returns true if recorded successfully
  */
@@ -97,7 +97,7 @@ export async function recordUsage(
 /**
  * Check if user has remaining quota.
  *
- * @param userId - Supabase user ID if logged in, null for anonymous
+ * @param userId - Supabase user ID if logged in
  * @returns true if user has remaining quota
  */
 export async function hasQuota(userId: string | null): Promise<boolean> {

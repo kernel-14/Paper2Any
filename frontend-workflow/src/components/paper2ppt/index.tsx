@@ -142,7 +142,7 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
   });
 
   const buildInsufficientPointsMessage = (required: number, remaining: number, action: string) =>
-    `点数不足：${action}需要 ${required} 点，当前剩余 ${remaining} 点。`;
+    `点数不足：${action}需要 ${required} 点，当前剩余 ${remaining} 点，请先购买兑换码充值。`;
 
   const ensureQuotaForAction = async (required: number, action: string) => {
     const { userId, isAnonymous } = getQuotaContext();
@@ -942,7 +942,7 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
     // Check quota before proceeding
     const quota = await checkQuota(user?.id || null, user?.is_anonymous || false);
     if (quota.remaining <= 0) {
-      setError('当前点数不足，请先获取更多点数后再试。');
+      setError('当前点数不足，请先购买兑换码充值后再试。');
       return;
     }
 

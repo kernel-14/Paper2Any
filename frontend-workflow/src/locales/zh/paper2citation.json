@@ -141,7 +141,7 @@
     "searchFailed": "作者搜索失败。",
     "detailFailed": "引用详情加载失败。",
     "contextFailed": "引用上下文提取失败。",
-    "quotaUserExhausted": "当前剩余额度已用完。",
-    "quotaGuestExhausted": "游客额度已用完，请先登录。"
+    "quotaUserExhausted": "点数不足，请先购买兑换码并充值。",
+    "quotaGuestExhausted": "请先登录后继续使用。"
   }
 }

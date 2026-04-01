@@ -29,6 +29,11 @@ def get_supabase_client() -> Optional[Client]:
     return _supabase_client
 
 
+def is_auth_configured() -> bool:
+    """Whether Supabase auth is configured for this deployment."""
+    return bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_ANON_KEY"))
+
+
 class AuthUser:
     """Authenticated user information."""
     

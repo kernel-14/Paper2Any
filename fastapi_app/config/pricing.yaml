@@ -1,10 +1,15 @@
 billing:
-  signup_bonus_points: 20
-  daily_grant_points: 10
-  daily_grant_balance_cap: 30
+  signup_bonus_points: 0
+  daily_grant_points: 5
+  daily_grant_balance_cap: 15
   referral_inviter_points: 5
   referral_invitee_points: 0
-  guest_daily_limit: 15
+  guest_daily_limit: 0
+  points_purchase_url: https://aceyun.cn/shop/4X1LH2OB
+  redeem_code_files:
+    "10": data/redeem_codes/points_10.txt
+    "50": data/redeem_codes/points_50.txt
+    "100": data/redeem_codes/points_100.txt
 
 workflows:
   paper2figure: 1

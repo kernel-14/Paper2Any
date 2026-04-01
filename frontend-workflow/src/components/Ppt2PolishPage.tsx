@@ -253,7 +253,7 @@ const Ppt2PolishPage = () => {
   });
 
   const buildInsufficientPointsMessage = (required: number, remaining: number, action: string) =>
-    `点数不足：${action}需要 ${required} 点，当前剩余 ${remaining} 点。`;
+    `点数不足：${action}需要 ${required} 点，当前剩余 ${remaining} 点，请先购买兑换码充值。`;
 
   const ensureQuotaForAction = async (required: number, action: string) => {
     const { userId, isAnonymous } = getQuotaContext();

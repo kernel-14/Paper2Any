@@ -4,6 +4,7 @@
   "success": "Success",
   "app": {
     "subtitle": "Agent-driven Research Creation Experience",
+    "purchaseMore": "Redeem Points",
     "githubProject": "GitHub Open Source",
     "exploreMore": "🚀 Explore more AI data processing tools",
     "quotaRemaining": "Remaining: {{remaining}}/{{limit}}",
@@ -167,16 +168,12 @@
     }
   },
   "userMenu": {
-    "anonymous": "Guest",
     "user": "User",
-    "identity": "Identity",
     "loggedIn": "Logged In",
-    "guestMode": "Guest Mode",
-    "limited": "Limited Features",
     "pro": "Pro Features Unlocked",
-    "signIn": "Sign in for full access",
+    "buyPoints": "Buy Redeem Codes",
+    "redeemPoints": "Redeem Points",
     "thanks": "Thanks for your support",
-    "exitGuest": "Exit Guest Mode",
     "signOut": "Sign Out"
   },
   "filesPage": {

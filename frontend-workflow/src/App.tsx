@@ -18,6 +18,7 @@ import Paper2CitationPage from './components/Paper2CitationPage';
 import { AccountPage } from './components/AccountPage';
 import { useTranslation } from 'react-i18next';
 import { PointsDisplay } from './components/PointsDisplay';
+import { PurchaseEntry } from './components/PurchaseEntry';
 import { UserMenu } from './components/UserMenu';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { Workflow, X, Menu } from 'lucide-react';
@@ -215,6 +216,7 @@ function App() {
             <div className="flex items-center gap-3">
               <LanguageSwitcher />
               <PointsDisplay />
+              <PurchaseEntry />
               <UserMenu 
                 onShowFiles={() => setShowFilesModal(true)}
                 onShowAccount={() => setShowAccountModal(true)}

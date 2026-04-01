@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import HTTPException
 
-from fastapi_app.config.pricing import get_pricing_config
+from fastapi_app.config.pricing import get_points_purchase_url, get_pricing_config, get_redeem_code_files
 from fastapi_app.config.settings import settings
 
 _SCOPE_TO_SETTING_NAMES: dict[str, tuple[str, str]] = {
@@ -60,6 +62,29 @@ def _get_any_configured_managed_llm_credentials() -> tuple[str, str]:
         if api_url and api_key:
             return api_url, api_key
     return _get_default_managed_llm_credentials()
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parent.parent.parent
+
+
+def _resolve_optional_path(value: str | None) -> Path | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = (_project_root() / path).resolve()
+    return path
+
+
+def has_points_redeem_catalog() -> bool:
+    for path_value in get_redeem_code_files().values():
+        path = _resolve_optional_path(path_value)
+        if path and path.is_file():
+            return True
+    return False
 
 
 def get_billing_mode() -> str:
@@ -126,10 +151,12 @@ def get_runtime_billing_config() -> dict:
         "managed_api_url": managed_api_url,
         "server_side_billing_enforced": True,
         "workflow_costs": pricing.get("workflows", {}),
-        "guest_daily_limit": int(billing.get("guest_daily_limit", 15)),
-        "signup_bonus_points": int(billing.get("signup_bonus_points", 20)),
-        "daily_grant_points": int(billing.get("daily_grant_points", 10)),
-        "daily_grant_balance_cap": int(billing.get("daily_grant_balance_cap", 30)),
+        "guest_daily_limit": int(billing.get("guest_daily_limit", 0)),
+        "signup_bonus_points": int(billing.get("signup_bonus_points", 0)),
+        "daily_grant_points": int(billing.get("daily_grant_points", 5)),
+        "daily_grant_balance_cap": int(billing.get("daily_grant_balance_cap", 15)),
         "referral_inviter_points": int(billing.get("referral_inviter_points", 5)),
         "referral_invitee_points": int(billing.get("referral_invitee_points", 0)),
+        "points_purchase_url": get_points_purchase_url(),
+        "points_redeem_enabled": has_points_redeem_catalog(),
     }

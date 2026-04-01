@@ -141,7 +141,7 @@
     "searchFailed": "Failed to search authors.",
     "detailFailed": "Failed to load citation detail.",
     "contextFailed": "Failed to extract citation context.",
-    "quotaUserExhausted": "Your remaining credits are exhausted.",
-    "quotaGuestExhausted": "Guest quota is exhausted. Please sign in."
+    "quotaUserExhausted": "Insufficient points. Please buy and redeem a code first.",
+    "quotaGuestExhausted": "Please sign in to continue."
   }
 }

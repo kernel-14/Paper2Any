@@ -77,6 +77,10 @@ class AppSettings(BaseSettings):
     SECURITY_BLOCKED_PUBLIC_OUTPUT_PREFIXES: str = "kb_data,kb_outputs,kb_exports,system"
     CORS_ALLOW_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
     CORS_ALLOW_ORIGIN_REGEX: str = ""
+    POINTS_PURCHASE_URL: str = ""
+    POINTS_REDEEM_CODE_FILE_10: str = str(_project_root() / "data" / "redeem_codes" / "points_10.txt")
+    POINTS_REDEEM_CODE_FILE_50: str = str(_project_root() / "data" / "redeem_codes" / "points_50.txt")
+    POINTS_REDEEM_CODE_FILE_100: str = str(_project_root() / "data" / "redeem_codes" / "points_100.txt")
     DEFAULT_SEARCH_API_KEY: str = ""
     DEFAULT_GOOGLE_CSE_ID: str = ""
     SUPABASE_URL: str = ""

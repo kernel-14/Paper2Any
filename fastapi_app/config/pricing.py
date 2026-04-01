@@ -11,12 +11,18 @@ from fastapi_app.config.settings import settings
 
 DEFAULT_PRICING: Dict[str, Any] = {
     "billing": {
-        "signup_bonus_points": 20,
-        "daily_grant_points": 10,
-        "daily_grant_balance_cap": 30,
+        "signup_bonus_points": 0,
+        "daily_grant_points": 5,
+        "daily_grant_balance_cap": 15,
         "referral_inviter_points": 5,
         "referral_invitee_points": 0,
-        "guest_daily_limit": 15,
+        "guest_daily_limit": 0,
+        "points_purchase_url": "",
+        "redeem_code_files": {
+            "10": "data/redeem_codes/points_10.txt",
+            "50": "data/redeem_codes/points_50.txt",
+            "100": "data/redeem_codes/points_100.txt",
+        },
     },
     "workflows": {
         "paper2figure": 1,
@@ -79,3 +85,42 @@ def get_workflow_cost(workflow_type: str, default: int = 1) -> int:
         return max(0, int(raw_cost))
     except (TypeError, ValueError):
         return default
+
+
+def get_billing_config() -> Dict[str, Any]:
+    pricing = get_pricing_config()
+    billing = pricing.get("billing", {})
+    return billing if isinstance(billing, dict) else {}
+
+
+def get_points_purchase_url() -> str:
+    billing = get_billing_config()
+    raw_value = billing.get("points_purchase_url", "")
+    if isinstance(raw_value, str) and raw_value.strip():
+        return raw_value.strip()
+    return (settings.POINTS_PURCHASE_URL or "").strip()
+
+
+def get_redeem_code_files() -> Dict[int, str]:
+    billing = get_billing_config()
+    configured = billing.get("redeem_code_files", {})
+    result: Dict[int, str] = {}
+
+    if isinstance(configured, dict):
+        for raw_key, raw_value in configured.items():
+            try:
+                points = int(raw_key)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(raw_value, str) and raw_value.strip():
+                result[points] = raw_value.strip()
+
+    if result:
+        return result
+
+    fallback = {
+        10: settings.POINTS_REDEEM_CODE_FILE_10,
+        50: settings.POINTS_REDEEM_CODE_FILE_50,
+        100: settings.POINTS_REDEEM_CODE_FILE_100,
+    }
+    return {points: value for points, value in fallback.items() if isinstance(value, str) and value.strip()}

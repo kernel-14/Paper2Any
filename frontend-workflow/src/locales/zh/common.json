@@ -4,6 +4,7 @@
   "success": "操作成功",
   "app": {
     "subtitle": "Agent 驱动的科研创作新体验",
+    "purchaseMore": "积分兑换",
     "githubProject": "GitHub开源项目",
     "exploreMore": "🚀 探索更多 AI 数据处理工具",
     "quotaRemaining": "剩余次数: {{remaining}}/{{limit}}",
@@ -167,16 +168,12 @@
     }
   },
   "userMenu": {
-    "anonymous": "匿名用户",
     "user": "用户",
-    "identity": "当前身份",
     "loggedIn": "已登录",
-    "guestMode": "访客模式",
-    "limited": "仅限部分功能可用",
     "pro": "尊贵会员功能已解锁",
-    "signIn": "登录以获取完整权限",
+    "buyPoints": "购买兑换码",
+    "redeemPoints": "兑换点数",
     "thanks": "感谢您的使用与支持",
-    "exitGuest": "退出访客模式",
     "signOut": "退出登录"
   },
   "filesPage": {

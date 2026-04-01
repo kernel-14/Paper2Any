@@ -61,3 +61,12 @@ async def claim_invite_code(
     service: BillingService = Depends(get_service),
 ) -> Dict[str, Any]:
     return service.claim_invite_code(user=user, invite_code=invite_code)
+
+
+@router.post("/points/redeem")
+async def redeem_points_code(
+    redeem_code: str = Body(..., embed=True),
+    user: AuthUser = Depends(get_current_user),
+    service: BillingService = Depends(get_service),
+) -> Dict[str, Any]:
+    return service.redeem_points_code(user=user, redeem_code=redeem_code)

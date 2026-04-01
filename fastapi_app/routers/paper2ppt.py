@@ -72,7 +72,7 @@ def _build_authenticated_event_key(
     submission_key: str,
 ) -> Optional[str]:
     user = getattr(request.state, "auth_user", None)
-    if not user or getattr(user, "is_anonymous", False):
+    if not user:
         return None
     user_id = str(getattr(user, "id", "") or "").strip()
     if not user_id:
