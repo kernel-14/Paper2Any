@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import os
 from datetime import datetime
 import uuid
@@ -14,6 +13,7 @@ from fastapi_app.schemas import Paper2FigureRequest, VerifyLlmRequest, VerifyLlm
 from fastapi_app.workflow_adapters import run_paper2figure_wf_api
 from fastapi_app.utils import _to_outputs_url
 from fastapi_app.config.settings import settings
+from fastapi_app.interprocess_lock import AsyncInterProcessSemaphore
 from fastapi_app.services.managed_api_service import resolve_llm_credentials
 from dataflow_agent.utils import get_project_root
 from dataflow_agent.logger import get_logger
@@ -23,9 +23,8 @@ log = get_logger(__name__)
 PROJECT_ROOT = get_project_root()
 BASE_OUTPUT_DIR = (PROJECT_ROOT / "outputs").resolve()
 
-# 全局信号量：控制重任务并发度（排队机制）
-# 保持在 Service 层或模块级别，因为它是全局共享的资源控制
-task_semaphore = asyncio.Semaphore(1)
+TASK_LIMITER = AsyncInterProcessSemaphore("paper2any_service_tasks", limit=1)
+VISUAL_WORKFLOW_LIMITER = AsyncInterProcessSemaphore("sam3_visual_workflows", limit=1)
 
 
 class Paper2AnyService:
@@ -245,8 +244,12 @@ class Paper2AnyService:
         )
 
         # 5. 执行 workflow
-        async with task_semaphore:
-            p2f_resp = await run_paper2figure_wf_api(p2f_req, result_path=run_dir)
+        async with TASK_LIMITER.hold():
+            if graph_type == "model_arch":
+                async with VISUAL_WORKFLOW_LIMITER.hold():
+                    p2f_resp = await run_paper2figure_wf_api(p2f_req, result_path=run_dir)
+            else:
+                p2f_resp = await run_paper2figure_wf_api(p2f_req, result_path=run_dir)
 
         # 6. 处理返回路径
         raw_path = Path(p2f_resp.ppt_filename)
@@ -351,8 +354,12 @@ class Paper2AnyService:
         )
 
         # 5. 执行 workflow
-        async with task_semaphore:
-            p2f_resp = await run_paper2figure_wf_api(p2f_req, result_path=run_dir)
+        async with TASK_LIMITER.hold():
+            if graph_type == "model_arch":
+                async with VISUAL_WORKFLOW_LIMITER.hold():
+                    p2f_resp = await run_paper2figure_wf_api(p2f_req, result_path=run_dir)
+            else:
+                p2f_resp = await run_paper2figure_wf_api(p2f_req, result_path=run_dir)
 
         # 6. 构造 URL 响应
         safe_ppt = _to_outputs_url(p2f_resp.ppt_filename, request) if p2f_resp.ppt_filename else ""
@@ -432,7 +439,8 @@ class Paper2AnyService:
                     factory = RuntimeRegistry.get("paper2drawio_visual")
                     builder = factory()
                     graph = builder.build()
-                    final_state = await graph.ainvoke(i2d_state)
+                    async with VISUAL_WORKFLOW_LIMITER.hold():
+                        final_state = await graph.ainvoke(i2d_state)
 
                     drawio_path = final_state.get("output_xml_path", "") if isinstance(final_state, dict) else getattr(final_state, "output_xml_path", "")
                     if not drawio_path:
@@ -492,7 +500,7 @@ class Paper2AnyService:
         abs_input_path = input_path.resolve()
 
         # 4. 执行 workflow
-        async with task_semaphore:
+        async with TASK_LIMITER.hold():
             resolved_chat_api_url, resolved_api_key = resolve_llm_credentials(
                 chat_api_url,
                 api_key,

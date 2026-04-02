@@ -86,6 +86,9 @@ class AppSettings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_ANON_KEY: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
+    SUPABASE_POSTGREST_TIMEOUT_SECONDS: float = 8.0
+    BILLING_QUOTA_CACHE_TTL_SECONDS: int = 10
+    BILLING_QUOTA_STALE_TTL_SECONDS: int = 300
 
     # RMBG-2.0 background removal model path
     RMBG_MODEL_PATH: str = str(_project_root() / "models" / "RMBG-2.0")

@@ -27,6 +27,10 @@ from dataflow_agent.workflow import run_workflow
 
 from fastapi_app.schemas import Paper2PPTRequest, Paper2PPTResponse
 from fastapi_app.utils import get_outputs_root, resolve_outputs_path
+from fastapi_app.workflow_adapters.heavy_workflow_subprocess import (
+    run_heavy_workflow_in_subprocess,
+    should_use_heavy_workflow_subprocess,
+)
 
 log = get_logger(__name__)
 
@@ -293,6 +297,51 @@ async def run_paper2page_content_refine_wf_api(
 
 
 async def run_paper2ppt_wf_api(
+    req: Paper2PPTRequest,
+    pagecontent: list[dict] | None = None,
+    result_path: str | None = None,
+    get_down: bool | None = None,
+    edit_page_num: int | None = None,
+    edit_page_prompt: str | None = None,
+    auto_fill_generated_pages: bool = True,
+) -> Paper2PPTResponse:
+    worker_result_path: Path | None = None
+    if result_path:
+        worker_result_path = resolve_outputs_path(result_path, must_exist=False, allow_dirs=True)
+
+    if should_use_heavy_workflow_subprocess(default=True):
+        log.info(
+            "[paper2ppt_wf_api] routing workflow through subprocess, result_path=%s, pagecontent_len=%s",
+            result_path,
+            len(pagecontent or []),
+        )
+        out_data = await run_heavy_workflow_in_subprocess(
+            mode="paper2ppt",
+            payload={
+                "request": req.model_dump(mode="json"),
+                "pagecontent": pagecontent or [],
+                "result_path": result_path or "",
+                "get_down": get_down,
+                "edit_page_num": edit_page_num,
+                "edit_page_prompt": edit_page_prompt,
+                "auto_fill_generated_pages": auto_fill_generated_pages,
+            },
+            result_path=worker_result_path,
+        )
+        return Paper2PPTResponse.model_validate(out_data.get("response") or {})
+
+    return await run_paper2ppt_wf_api_local(
+        req=req,
+        pagecontent=pagecontent,
+        result_path=result_path,
+        get_down=get_down,
+        edit_page_num=edit_page_num,
+        edit_page_prompt=edit_page_prompt,
+        auto_fill_generated_pages=auto_fill_generated_pages,
+    )
+
+
+async def run_paper2ppt_wf_api_local(
     req: Paper2PPTRequest,
     pagecontent: list[dict] | None = None,
     result_path: str | None = None,

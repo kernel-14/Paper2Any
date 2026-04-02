@@ -17,12 +17,14 @@ from dataflow_agent.toolkits.drawio_tools import wrap_xml, extract_cells
 from dataflow_agent.toolkits.multimodaltool.mineru_tool import run_mineru_pdf_extract_http
 from dataflow_agent.logger import get_logger
 from fastapi_app.config.settings import settings
+from fastapi_app.interprocess_lock import AsyncInterProcessSemaphore
 from fastapi_app.services.managed_api_service import resolve_llm_credentials
 
 log = get_logger(__name__)
 
 BASE_OUTPUT_DIR = Path("outputs").resolve()
-task_semaphore = asyncio.Semaphore(2)
+VISUAL_WORKFLOW_LIMITER = AsyncInterProcessSemaphore("sam3_visual_workflows", limit=1)
+SEMANTIC_WORKFLOW_LIMITER = AsyncInterProcessSemaphore("paper2drawio_semantic", limit=2)
 
 
 class Paper2DrawioService:
@@ -104,8 +106,9 @@ class Paper2DrawioService:
         from dataflow_agent.workflow.registry import RuntimeRegistry
 
         try:
-            async with task_semaphore:
-                workflow_name = "paper2drawio_visual" if use_sam3_workflow else "paper2drawio_semantic"
+            workflow_name = "paper2drawio_visual" if use_sam3_workflow else "paper2drawio_semantic"
+            limiter = VISUAL_WORKFLOW_LIMITER if use_sam3_workflow else SEMANTIC_WORKFLOW_LIMITER
+            async with limiter.hold():
                 log.info(
                     f"[paper2drawio] selected workflow={workflow_name}, input_type={workflow_input_type}, model={candidate_model}"
                 )

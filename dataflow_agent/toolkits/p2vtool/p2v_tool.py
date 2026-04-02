@@ -31,7 +31,7 @@ DEFAULT_P2V_CURSOR_LOCAL_ENABLED = "auto"
 DEFAULT_P2V_CURSOR_LOCAL_TIMEOUT = 1800
 DEFAULT_P2V_CURSOR_LOCAL_MAX_NEW_TOKENS = 64
 DEFAULT_P2V_CURSOR_LOCAL_ALLOC_CONF = "expandable_segments:True"
-DEFAULT_P2V_TTS_PARALLELISM = 3
+DEFAULT_P2V_TTS_PARALLELISM = 2
 DEFAULT_P2V_VIDEO_RENDER_THREADS = 12
 DEFAULT_P2V_SUBTITLE_FONT_CANDIDATES = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -1041,16 +1041,22 @@ def talking_gen_per_slide(model_name, input_list, project_root, save_dir, env_pa
 
 def get_audio_paths(slide_audio_dir: Optional[str | Path]):
     '''获取 slide_audio_dir 目录下的所有音频文件路径，并按数字顺序排序返回'''
+    if slide_audio_dir is None:
+        return []
     if isinstance(slide_audio_dir, str):
         slide_audio_dir = Path(slide_audio_dir)
+    if not slide_audio_dir.exists():
+        return []
     slide_audio_paths = [
         p for p in slide_audio_dir.iterdir()
-        if p.is_file() and re.search(r'\d+', p.name)
+        if p.is_file() and re.fullmatch(r'\d+\.wav', p.name)
     ]
 
     def get_sort_key(file_path: Path):
-        match = re.search(r'(\d+)', file_path.name)
-        return int(match.group()) if match else float('inf')
+        try:
+            return int(file_path.stem)
+        except ValueError:
+            return float('inf')
     
     slide_audio_paths.sort(key=get_sort_key)
     slide_audio_paths = [str(p) for p in slide_audio_paths]

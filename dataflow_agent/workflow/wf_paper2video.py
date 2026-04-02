@@ -836,6 +836,14 @@ def create_paper2video_graph() -> GenericGraphBuilder:
         import subprocess
         
         log.info(f"开始执行 p2v_merge_all node节点")
+
+        def raise_subprocess_error(step: str, exc: subprocess.CalledProcessError) -> None:
+            stderr = (exc.stderr or "").strip()
+            stdout = (exc.stdout or "").strip()
+            detail = stderr or stdout or str(exc)
+            if len(detail) > 2000:
+                detail = detail[-2000:]
+            raise RuntimeError(f"{step} failed: {detail}") from exc
         
         paper_pdf_path = Path(state.request.get("paper_pdf_path", ""))
         paper_base_path = paper_pdf_path.with_suffix('').expanduser().resolve()
@@ -878,15 +886,32 @@ def create_paper2video_graph() -> GenericGraphBuilder:
                     "-c:v", "libx264", "-c:a", "aac", "-preset", "ultrafast", "-crf", "23",
                     "-shortest", str(output_path),
                 ]
-                subprocess.run(cmd, check=True, capture_output=True, text=True)
+                try:
+                    subprocess.run(cmd, check=True, capture_output=True, text=True)
+                except subprocess.CalledProcessError as exc:
+                    raise_subprocess_error(f"paper2video merge page {i + 1}", exc)
                 list_lines.append(f"file '{output_path.resolve()}'")
             list_file = tmp_merage_dir / "list.txt"
             list_file.write_text("\n".join(list_lines), encoding="utf-8")
             if list_lines:
-                subprocess.run(
-                    ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_file), "-c", "copy", str(tmp_merage_1)],
-                    check=True, capture_output=True, text=True,
-                )
+                try:
+                    subprocess.run(
+                        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_file), "-c", "copy", str(tmp_merage_1)],
+                        check=True, capture_output=True, text=True,
+                    )
+                except subprocess.CalledProcessError as exc:
+                    log.warning("paper2video concat slides copy failed, retrying with re-encode")
+                    try:
+                        subprocess.run(
+                            [
+                                "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_file),
+                                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+                                "-c:a", "aac", str(tmp_merage_1),
+                            ],
+                            check=True, capture_output=True, text=True,
+                        )
+                    except subprocess.CalledProcessError as retry_exc:
+                        raise_subprocess_error("paper2video concat slides", retry_exc)
                 log.info(f"已使用语音合并至 {tmp_merage_1}")
             else:
                 raise RuntimeError("无有效 slide/语音片段可供合并")
@@ -899,7 +924,10 @@ def create_paper2video_graph() -> GenericGraphBuilder:
                 str(width), str(height), str(num_slide), str(tmp_merage_1),
                 ref_img.split("/")[-1].replace(".png", ""),
             ]
-            subprocess.run(merage_cmd, text=True, check=True)
+            try:
+                subprocess.run(merage_cmd, text=True, check=True, capture_output=True)
+            except subprocess.CalledProcessError as exc:
+                raise_subprocess_error("paper2video merge script", exc)
         # render cursor
         cursor_size = size//6
         tmp_merage_2 = paper_output_dir /  "2_merge.mp4"

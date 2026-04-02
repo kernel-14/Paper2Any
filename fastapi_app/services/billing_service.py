@@ -1,18 +1,37 @@
 from __future__ import annotations
 
 import hashlib
+import threading
+import time
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+import httpx
 from fastapi import HTTPException
 
+from dataflow_agent.logger import get_logger
 from fastapi_app.config.pricing import get_pricing_config, get_redeem_code_files, get_workflow_cost
+from fastapi_app.config.settings import settings
 from fastapi_app.dependencies import AuthUser
 from fastapi_app.dependencies.auth import is_auth_configured
 from fastapi_app.services.managed_api_service import get_runtime_billing_config, is_free_billing_mode
 from fastapi_app.services.supabase_admin_service import extract_response_data, get_supabase_admin_client
+
+log = get_logger(__name__)
+
+
+@dataclass
+class _QuotaCacheEntry:
+    value: Dict[str, Any]
+    expires_at: float
+    stale_until: float
+
+
+_quota_cache: Dict[str, _QuotaCacheEntry] = {}
+_quota_cache_lock = threading.Lock()
 
 
 class BillingService:
@@ -27,6 +46,66 @@ class BillingService:
 
     def _auth_enabled(self) -> bool:
         return is_auth_configured()
+
+    def _quota_cache_ttl_seconds(self) -> int:
+        return max(0, int(settings.BILLING_QUOTA_CACHE_TTL_SECONDS))
+
+    def _quota_stale_ttl_seconds(self) -> int:
+        return max(self._quota_cache_ttl_seconds(), int(settings.BILLING_QUOTA_STALE_TTL_SECONDS))
+
+    def _quota_cache_key(self, user_id: str) -> str:
+        return str(user_id)
+
+    def _get_cached_quota(self, user_id: str, *, allow_stale: bool = False) -> Optional[Dict[str, Any]]:
+        now = time.monotonic()
+        key = self._quota_cache_key(user_id)
+        with _quota_cache_lock:
+            entry = _quota_cache.get(key)
+            if entry is None:
+                return None
+            if entry.stale_until <= now:
+                _quota_cache.pop(key, None)
+                return None
+            if not allow_stale and entry.expires_at <= now:
+                return None
+            return dict(entry.value)
+
+    def _set_cached_quota(self, user_id: str, quota: Dict[str, Any]) -> None:
+        ttl_seconds = self._quota_cache_ttl_seconds()
+        stale_ttl_seconds = self._quota_stale_ttl_seconds()
+        now = time.monotonic()
+        key = self._quota_cache_key(user_id)
+        with _quota_cache_lock:
+            _quota_cache[key] = _QuotaCacheEntry(
+                value=dict(quota),
+                expires_at=now + ttl_seconds,
+                stale_until=now + stale_ttl_seconds,
+            )
+
+    def _invalidate_cached_quota(self, *user_ids: Optional[str]) -> None:
+        keys = [self._quota_cache_key(user_id) for user_id in user_ids if user_id]
+        if not keys:
+            return
+        with _quota_cache_lock:
+            for key in keys:
+                _quota_cache.pop(key, None)
+
+    def _billing_backend_unavailable(self) -> HTTPException:
+        return HTTPException(
+            status_code=503,
+            detail="Billing service temporarily unavailable. Please retry shortly.",
+            headers={"Retry-After": "3"},
+        )
+
+    def _execute_query(self, query: Any) -> Any:
+        try:
+            return query.execute()
+        except httpx.TimeoutException as exc:
+            log.warning("Supabase billing request timed out: %s", exc)
+            raise self._billing_backend_unavailable() from exc
+        except httpx.HTTPError as exc:
+            log.warning("Supabase billing request failed: %s", exc)
+            raise self._billing_backend_unavailable() from exc
 
     def _unlimited_quota(self) -> Dict[str, Any]:
         unlimited = 9_999_999
@@ -64,7 +143,7 @@ class BillingService:
             query = query.order(order_by, desc=not ascending)
         if limit is not None:
             query = query.limit(limit)
-        data = extract_response_data(query.execute()) or []
+        data = extract_response_data(self._execute_query(query)) or []
         return data if isinstance(data, list) else []
 
     def _select_first(self, table: str, columns: str, **filters: Any) -> Optional[Dict[str, Any]]:
@@ -72,7 +151,8 @@ class BillingService:
         return rows[0] if rows else None
 
     def _insert_row(self, table: str, payload: Dict[str, Any]) -> Any:
-        return self._supabase().table(table).insert(payload).execute()
+        response = self._execute_query(self._supabase().table(table).insert(payload))
+        return response
 
     def _project_root(self) -> Path:
         return Path(__file__).resolve().parent.parent.parent
@@ -167,6 +247,7 @@ class BillingService:
         if event_key:
             payload["event_key"] = event_key
         self._insert_row("points_ledger", payload)
+        self._invalidate_cached_quota(user_id)
 
     def _ensure_signup_bonus(self, user: AuthUser) -> None:
         signup_bonus_points = int(self._billing_config().get("signup_bonus_points", 0))
@@ -256,7 +337,22 @@ class BillingService:
         if not self._auth_enabled():
             return self._unlimited_quota()
         if user and not getattr(user, "is_anonymous", False):
-            return self._quota_from_user(user)
+            cached_quota = self._get_cached_quota(user.id)
+            if cached_quota is not None:
+                return cached_quota
+
+            try:
+                quota = self._quota_from_user(user)
+            except HTTPException as exc:
+                if exc.status_code == 503:
+                    stale_quota = self._get_cached_quota(user.id, allow_stale=True)
+                    if stale_quota is not None:
+                        stale_quota["stale"] = True
+                        return stale_quota
+                raise
+
+            self._set_cached_quota(user.id, quota)
+            return quota
         raise HTTPException(status_code=401, detail="Authentication required")
 
     def consume_workflow(
@@ -292,6 +388,17 @@ class BillingService:
             self._grant_daily_points_if_needed(user)
             if event_key and self._select_first("points_ledger", "id", event_key=event_key):
                 remaining = self._get_balance(user.id)
+                self._set_cached_quota(
+                    user.id,
+                    {
+                        "used": 0,
+                        "limit": remaining,
+                        "remaining": remaining,
+                        "is_authenticated": True,
+                        "billing_mode": "free",
+                        "user_id": user.id,
+                    },
+                )
                 return {
                     "success": True,
                     "workflow_type": workflow_type,
@@ -309,7 +416,18 @@ class BillingService:
                 reason=f"workflow_{workflow_type}",
                 event_key=event_key or f"workflow_{workflow_type}_{user.id}_{uuid4().hex}",
             )
-            remaining = self._get_balance(user.id)
+            remaining = balance - requested_amount
+            self._set_cached_quota(
+                user.id,
+                {
+                    "used": 0,
+                    "limit": remaining,
+                    "remaining": remaining,
+                    "is_authenticated": True,
+                    "billing_mode": "free",
+                    "user_id": user.id,
+                },
+            )
             return {
                 "success": True,
                 "workflow_type": workflow_type,
@@ -389,6 +507,7 @@ class BillingService:
             raise
 
         remaining = self._get_balance(user.id)
+        self._invalidate_cached_quota(user.id)
         return {
             "success": True,
             "points_added": points,
@@ -444,6 +563,7 @@ class BillingService:
                 reason="referral_invitee",
                 event_key=f"referral_invitee_{user.id}_{normalized_code}",
             )
+        self._invalidate_cached_quota(inviter_user_id, user.id)
 
         return {
             "success": True,

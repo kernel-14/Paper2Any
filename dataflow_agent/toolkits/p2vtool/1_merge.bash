@@ -29,6 +29,20 @@ choose_video_encoder() {
 
 VIDEO_CODEC="$(choose_video_encoder)"
 
+concat_page_clips() {
+  if ffmpeg -y -f concat -safe 0 -i "$LIST_FILE" -c copy "$VIDEO_PATH"; then
+    return 0
+  fi
+
+  echo "stream-copy concat failed, retrying with re-encode" >&2
+  rm -f "$VIDEO_PATH"
+  ffmpeg -y \
+    -f concat -safe 0 -i "$LIST_FILE" \
+    -c:v libx264 -preset ultrafast -crf 23 \
+    -c:a aac \
+    "$VIDEO_PATH"
+}
+
 for i in $(seq 1 "$NUM_VIDEO"); do
   slide_path="$SLIDE_DIR/$i.png"
   video_path="$VIDEO_DIR/$((i-1))/digit_person_withaudio.mp4"
@@ -73,7 +87,7 @@ if [[ ! -s "$LIST_FILE" ]]; then
   exit 1
 fi
 
-ffmpeg -y -f concat -safe 0 -i "$LIST_FILE" -c copy "$VIDEO_PATH"
+concat_page_clips
 
 if [[ ! -s "$VIDEO_PATH" ]]; then
   echo "concat output missing: $VIDEO_PATH" >&2

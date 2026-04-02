@@ -15,6 +15,17 @@ export interface RecordUsageOptions {
   isAnonymous?: boolean;
 }
 
+interface CachedQuotaEntry {
+  value: QuotaInfo;
+  expiresAt: number;
+  staleUntil: number;
+}
+
+const QUOTA_CACHE_TTL_MS = 10_000;
+const QUOTA_STALE_TTL_MS = 60_000;
+const quotaCache = new Map<string, CachedQuotaEntry>();
+const inflightQuotaRequests = new Map<string, Promise<QuotaInfo>>();
+
 function buildUnlimitedQuota(): QuotaInfo {
   return {
     used: 0,
@@ -25,6 +36,53 @@ function buildUnlimitedQuota(): QuotaInfo {
   };
 }
 
+function getQuotaCacheKey(userId: string | null): string {
+  return userId || '__anonymous__';
+}
+
+function readCachedQuota(userId: string | null, allowStale: boolean = false): QuotaInfo | null {
+  const key = getQuotaCacheKey(userId);
+  const entry = quotaCache.get(key);
+  if (!entry) {
+    return null;
+  }
+
+  const now = Date.now();
+  if (entry.staleUntil <= now) {
+    quotaCache.delete(key);
+    return null;
+  }
+  if (!allowStale && entry.expiresAt <= now) {
+    return null;
+  }
+  return { ...entry.value };
+}
+
+function writeCachedQuota(userId: string | null, quota: QuotaInfo): void {
+  const now = Date.now();
+  quotaCache.set(getQuotaCacheKey(userId), {
+    value: { ...quota },
+    expiresAt: now + QUOTA_CACHE_TTL_MS,
+    staleUntil: now + QUOTA_STALE_TTL_MS,
+  });
+}
+
+export function invalidateQuotaCache(userId: string | null): void {
+  const key = getQuotaCacheKey(userId);
+  quotaCache.delete(key);
+  inflightQuotaRequests.delete(key);
+}
+
+function normalizeQuotaResponse(data: any): QuotaInfo {
+  return {
+    used: Number(data.used || 0),
+    limit: Number(data.limit || 0),
+    remaining: Number(data.remaining || 0),
+    isAuthenticated: Boolean(data.is_authenticated),
+    billingMode: data.billing_mode || getRuntimeConfigSync().billing_mode,
+  };
+}
+
 /**
  * Check current quota for the active deployment mode.
  *
@@ -32,25 +90,40 @@ function buildUnlimitedQuota(): QuotaInfo {
  * - Without Supabase, backend returns unlimited local usage.
  */
 export async function checkQuota(userId: string | null, _legacyIsAnonymous: boolean = false): Promise<QuotaInfo> {
-  await fetchRuntimeConfig().catch(() => undefined);
-  try {
-    const response = await backendFetch('/api/v1/account/quota');
-    if (!response.ok) {
-      console.warn('[quotaService] Quota request failed:', response.status);
-      return buildUnlimitedQuota();
-    }
-    const data = await response.json();
-    return {
-      used: Number(data.used || 0),
-      limit: Number(data.limit || 0),
-      remaining: Number(data.remaining || 0),
-      isAuthenticated: Boolean(data.is_authenticated),
-      billingMode: data.billing_mode || getRuntimeConfigSync().billing_mode,
-    };
-  } catch (err) {
-    console.error('[quotaService] Error checking quota:', err);
-    return buildUnlimitedQuota();
+  const cachedQuota = readCachedQuota(userId);
+  if (cachedQuota) {
+    return cachedQuota;
   }
+
+  const cacheKey = getQuotaCacheKey(userId);
+  const inflight = inflightQuotaRequests.get(cacheKey);
+  if (inflight) {
+    return inflight;
+  }
+
+  const requestPromise = (async () => {
+    await fetchRuntimeConfig().catch(() => undefined);
+    try {
+      const response = await backendFetch('/api/v1/account/quota');
+      if (!response.ok) {
+        console.warn('[quotaService] Quota request failed:', response.status);
+        return readCachedQuota(userId, true) ?? buildUnlimitedQuota();
+      }
+
+      const data = await response.json();
+      const quota = normalizeQuotaResponse(data);
+      writeCachedQuota(userId, quota);
+      return quota;
+    } catch (err) {
+      console.error('[quotaService] Error checking quota:', err);
+      return readCachedQuota(userId, true) ?? buildUnlimitedQuota();
+    } finally {
+      inflightQuotaRequests.delete(cacheKey);
+    }
+  })();
+
+  inflightQuotaRequests.set(cacheKey, requestPromise);
+  return requestPromise;
 }
 
 /**
@@ -87,6 +160,7 @@ export async function recordUsage(
       console.warn('[quotaService] Failed to consume quota:', response.status);
       return false;
     }
+    invalidateQuotaCache(userId);
     return true;
   } catch (err) {
     console.error('[quotaService] Error recording usage:', err);
