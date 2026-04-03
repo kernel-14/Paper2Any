@@ -17,6 +17,7 @@ from . import (
     kb_embedding,
     files,
     image2drawio,
+    mindmap,
     paper2drawio,
     paper2rebuttal,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "kb_embedding",
     "files",
     "image2drawio",
+    "mindmap",
     "paper2drawio",
     "paper2rebuttal",
 ]

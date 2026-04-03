@@ -155,11 +155,7 @@ const SettingsCard: React.FC<SettingsCardProps> = ({
                   <select
                     value={llmApiUrl}
                     onChange={e => {
-                      const val = e.target.value;
-                      setLlmApiUrl(val);
-                      if (val === 'http://123.129.219.111:3000/v1') {
-                        setModel('gemini-3-pro-image-preview');
-                      }
+                      setLlmApiUrl(e.target.value);
                     }}
                     className="flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-gray-200 outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                   >

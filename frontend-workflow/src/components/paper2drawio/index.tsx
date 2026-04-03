@@ -71,6 +71,7 @@ export default function Paper2DrawioPage({
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [drawioReady, setDrawioReady] = useState(false);
+  const [drawioFrameKey, setDrawioFrameKey] = useState(0);
 
   // GitHub Stars
   const [stars, setStars] = useState<{dataflow: number | null, agent: number | null, dataflex: number | null}>({
@@ -283,6 +284,15 @@ export default function Paper2DrawioPage({
     user?.id,
   ]);
 
+  const resetDrawioSession = useCallback(() => {
+    animationTokenRef.current += 1;
+    isAnimatingRef.current = false;
+    lastLoadedXmlRef.current = '';
+    pendingExportRef.current = { resolve: null, reject: null, format: null };
+    setDrawioReady(false);
+    setDrawioFrameKey(prev => prev + 1);
+  }, []);
+
   // 生成图表
   const handleGenerate = useCallback(async () => {
     if (!textContent && !file) return;
@@ -350,6 +360,7 @@ export default function Paper2DrawioPage({
           }
           const xml = await fetch(drawioUrl).then(r => r.text());
           if (xml && xml.includes('<mxfile')) {
+            resetDrawioSession();
             setXmlContent(xml);
           }
         }
@@ -386,6 +397,7 @@ export default function Paper2DrawioPage({
         throw new Error(data?.error || 'DrawIO 生成失败');
       }
       if (data.xml_content) {
+        resetDrawioSession();
         setXmlContent(data.xml_content);
       } else {
         throw new Error('DrawIO 生成失败：未返回可编辑 XML');
@@ -414,6 +426,7 @@ export default function Paper2DrawioPage({
     drawioLanguage,
     enableModelRace,
     enableVlmValidation,
+    resetDrawioSession,
   ]);
 
   const handleSelectMode = useCallback((mode: 'ai' | 'paper2drawio') => {
@@ -707,6 +720,7 @@ export default function Paper2DrawioPage({
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (!DRAWIO_ORIGINS.has(event.origin) || typeof event.data !== 'string') return;
+      if (iframeRef.current?.contentWindow && event.source !== iframeRef.current.contentWindow) return;
       let message: { event?: string; xml?: string; data?: string } = {};
       try {
         message = JSON.parse(event.data) as { event?: string; xml?: string; data?: string };
@@ -1268,18 +1282,29 @@ export default function Paper2DrawioPage({
                 </div>
               </div>
             )}
-            <div className={`mt-4 flex-1 bg-[#0b0f17] rounded-2xl border border-white/10 min-h-[420px] lg:min-h-[720px] overflow-hidden ${xmlContent ? 'relative block' : 'flex items-center justify-center'}`}>
-              {xmlContent ? (
-                <iframe
-                  ref={iframeRef}
-                  src={`https://embed.diagrams.net/?embed=1&spin=1&proto=json&autosave=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1&sidebar=0&layers=0&toolbar=0&menubar=0&status=0&format=0`}
-                  className="absolute inset-0 w-full h-full border-0"
-                  title="draw.io editor"
-                />
-              ) : (
-                <div className="text-center animate-fade-in">
-                  <Wand2 className="w-12 h-12 mx-auto text-slate-500 mb-3" />
-                  <p className="text-sm text-slate-400">{t('previewPlaceholder')}</p>
+            <div className="mt-4 flex-1 bg-[#0b0f17] rounded-2xl border border-white/10 min-h-[420px] lg:min-h-[720px] overflow-hidden relative">
+              <iframe
+                key={drawioFrameKey}
+                ref={iframeRef}
+                src={`https://embed.diagrams.net/?embed=1&spin=1&proto=json&autosave=1&saveAndExit=0&noSaveBtn=1&noExitBtn=1&sidebar=0&layers=0&toolbar=0&menubar=0&status=0&format=0`}
+                className={`absolute inset-0 w-full h-full border-0 transition-opacity ${xmlContent ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                title="draw.io editor"
+              />
+              {!xmlContent && (
+                <div className="absolute inset-0 flex items-center justify-center text-center animate-fade-in">
+                  <div>
+                    <Wand2 className="w-12 h-12 mx-auto text-slate-500 mb-3" />
+                    <p className="text-sm text-slate-400">{t('previewPlaceholder')}</p>
+                  </div>
+                </div>
+              )}
+              {xmlContent && !drawioReady && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#0b0f17]/85 backdrop-blur-sm text-center">
+                  <div className="space-y-3">
+                    <div className="mx-auto h-8 w-8 rounded-full border-2 border-white/20 border-t-sky-300 animate-spin" />
+                    <p className="text-sm text-slate-300">正在初始化 DrawIO 预览...</p>
+                    <p className="text-xs text-slate-500">首次加载或切换新图表时会稍等几秒</p>
+                  </div>
                 </div>
               )}
             </div>

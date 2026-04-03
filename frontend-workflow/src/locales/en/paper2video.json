@@ -64,13 +64,14 @@
     "scriptLabel": "Voice script",
     "scriptPlaceholder": "Edit script for this page...",
     "loadingImage": "Loading image...",
-    "costHint": "Generating the final video will consume {{count}} points",
+    "costHint": "Video generation costs {{perPage}} points per page. This run has {{pages}} pages, so it will consume {{count}} points.",
     "back": "Back to upload",
-    "confirmAndGenerate": "Confirm and generate video",
+    "confirmAndGenerate": "Confirm and generate video ({{count}} points)",
+    "confirmPrompt": "Start generating the video?\\nThere are {{pages}} pages, {{perPage}} points per page, total {{count}} points.",
     "generating": "Generating video..."
   },
   "errors": {
-    "quotaUserInsufficient": "You need at least {{count}} remaining points to generate a video",
+    "quotaUserInsufficient": "Insufficient points. This video has {{pages}} pages at {{perPage}} points per page, so {{count}} points are required.",
     "authRequired": "Please sign in to continue."
   },
   "complete": {

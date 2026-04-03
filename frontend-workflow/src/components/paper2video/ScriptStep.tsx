@@ -6,6 +6,7 @@ import { ScriptPage, Step } from './types';
 interface ScriptStepProps {
   scriptPages: ScriptPage[];
   generationCost: number;
+  perPageCost: number;
   setScriptPages: React.Dispatch<React.SetStateAction<ScriptPage[]>>;
   handleConfirmScript: () => void;
   setCurrentStep: (step: Step) => void;
@@ -16,6 +17,7 @@ interface ScriptStepProps {
 const ScriptStep: React.FC<ScriptStepProps> = ({
   scriptPages,
   generationCost,
+  perPageCost,
   setScriptPages,
   handleConfirmScript,
   setCurrentStep,
@@ -79,7 +81,7 @@ const ScriptStep: React.FC<ScriptStepProps> = ({
       </div>
 
       <div className="mt-6 text-sm text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-3">
-        {t('script.costHint', { count: generationCost })}
+        {t('script.costHint', { pages: scriptPages.length, perPage: perPageCost, count: generationCost })}
       </div>
 
       <div className="flex justify-between mt-8">
@@ -101,7 +103,7 @@ const ScriptStep: React.FC<ScriptStepProps> = ({
             </>
           ) : (
             <>
-              {t('script.confirmAndGenerate')} <ArrowRight size={18} />
+              {t('script.confirmAndGenerate', { count: generationCost })} <ArrowRight size={18} />
             </>
           )}
         </button>

@@ -4,6 +4,7 @@ import { API_URL_OPTIONS, DEFAULT_LLM_API_URL } from '../../config/api';
 import { getApiSettings, saveApiSettings } from '../../services/apiSettingsService';
 import { fetchRuntimeConfig, getRuntimeConfigSync, RuntimeConfig } from '../../services/runtimeConfigService';
 import { useAuthStore } from '../../stores/authStore';
+import { buildManagedModeDescription, resolvePointsPurchaseUrl } from '../../utils/pointsMessaging';
 
 export const SettingsView = () => {
   const { user } = useAuthStore();
@@ -26,6 +27,10 @@ export const SettingsView = () => {
       setApiKey(settings.apiKey || '');
     }
   }, [user?.id]);
+
+  const purchaseUrl = runtimeConfig.billing_mode === 'free'
+    ? resolvePointsPurchaseUrl(runtimeConfig)
+    : '';
 
   const handleSave = () => {
     if (!user?.id) return;
@@ -118,7 +123,17 @@ export const SettingsView = () => {
           </>
         ) : (
           <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-4 py-4 text-sm text-cyan-100">
-            当前为后端托管模式。知识库工具会自动使用服务器端 `.env` 中的模型配置，无需在浏览器里再保存 API URL 或 API Key。
+            <p>{buildManagedModeDescription(purchaseUrl)}</p>
+            {purchaseUrl && (
+              <a
+                href={purchaseUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-cyan-100 transition-colors hover:text-white"
+              >
+                前往购买页获取兑换码
+              </a>
+            )}
           </div>
         )}
       </div>

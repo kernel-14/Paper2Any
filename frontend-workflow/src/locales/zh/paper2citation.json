@@ -141,7 +141,7 @@
     "searchFailed": "作者搜索失败。",
     "detailFailed": "引用详情加载失败。",
     "contextFailed": "引用上下文提取失败。",
-    "quotaUserExhausted": "点数不足，请先购买兑换码并充值。",
+    "quotaUserExhausted": "点数不足，请先前往购买页获取兑换码，再到账户页兑换加点。",
     "quotaGuestExhausted": "请先登录后继续使用。"
   }
 }

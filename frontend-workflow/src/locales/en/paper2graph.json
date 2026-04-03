@@ -126,7 +126,7 @@
     "unsupportedFile": "Only PDF and common image formats are supported. Please check the file type.",
     "noFile": "Please select a file or image to upload first",
     "noText": "Please enter the text content to be converted to PPTX",
-    "quotaUserExhausted": "Insufficient points. Please buy and redeem a code first.",
+    "quotaUserExhausted": "Insufficient points. Please get a redeem code from the purchase page, then redeem it in Account.",
     "quotaGuestExhausted": "Please sign in to continue.",
     "missingApiConfig": "Please configure model API URL and API Key first",
     "techRouteNoImage": "Technical roadmap does not support image input",

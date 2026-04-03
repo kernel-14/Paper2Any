@@ -8,7 +8,10 @@ import fitz
 from fastapi import File, UploadFile, HTTPException
 from fastapi_app.schemas import Paper2PPTRequest
 from fastapi_app.interprocess_lock import AsyncInterProcessSemaphore
-from fastapi_app.services.managed_api_service import resolve_llm_credentials
+from fastapi_app.services.managed_api_service import (
+    resolve_image_generation_credentials,
+    resolve_llm_credentials,
+)
 from fastapi_app.workflow_adapters.wa_pdf2ppt import run_pdf2ppt_wf_api
 from dataflow_agent.utils import get_project_root
 from dataflow_agent.logger import get_logger
@@ -65,6 +68,11 @@ class PDF2PPTService:
             api_key,
             scope="pdf2ppt",
         )
+        resolved_image_api_url, resolved_image_api_key = resolve_image_generation_credentials(
+            chat_api_url,
+            api_key,
+            scope="pdf2ppt",
+        )
         # 0.5 如果启用 AI 增强，必须校验 API 配置
         if use_ai_edit:
             if not resolved_chat_api_url or not resolved_api_key:
@@ -97,7 +105,10 @@ class PDF2PPTService:
             input_type="PDF",
             input_content=str(abs_pdf_path),
             chat_api_url=resolved_chat_api_url or "",
+            chat_api_key=resolved_api_key or "",
             api_key=resolved_api_key or "",
+            image_api_url=resolved_image_api_url or "",
+            image_api_key=resolved_image_api_key or "",
             model=model,
             gen_fig_model=gen_fig_model,
             language=language,

@@ -121,6 +121,9 @@ class Paper2FigureRequest(BaseModel):
     api_key: str = ""
     # 如果使用第三方外部 API（如 OpenAI），在此填写外部 API Key；为空则使用内部服务
 
+    image_api_url: str = ""
+    image_api_key: str = ""
+
     model: str = settings.PAPER2FIGURE_TEXT_MODEL
     # 用于执行理解、抽象、描述生成的文本模型名称
 
@@ -545,6 +548,8 @@ class Paper2PPTRequest(BaseModel):
     # ---------------------- 图类型 & 难度设置 ----------------------
     chat_api_key: str = "fill the key"
     api_key: str = ""
+    image_api_url: str = ""
+    image_api_key: str = ""
     # 用于对话的模型
     model: str = settings.PAPER2PPT_DEFAULT_MODEL
 

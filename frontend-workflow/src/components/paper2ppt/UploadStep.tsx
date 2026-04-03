@@ -12,6 +12,7 @@ import QRCodeTooltip from '../QRCodeTooltip';
 import ManagedApiNotice from '../ManagedApiNotice';
 import DemoCard from './DemoCard';
 import { PptGenerationMode, UploadMode, StyleMode, StylePreset } from './types';
+import { getManagedValidationText, isInsufficientPointsError } from '../../utils/pointsMessaging';
 
 interface UploadStepProps {
   pptMode: PptGenerationMode;
@@ -35,6 +36,7 @@ interface UploadStepProps {
   
   isUploading: boolean;
   isValidating: boolean;
+  isUploadSubmitLocked: boolean;
   pageCount: number;
   setPageCount: (count: number) => void;
   useLongPaper: boolean;
@@ -48,6 +50,7 @@ interface UploadStepProps {
   progress: number;
   progressStatus: string;
   error: string | null;
+  purchaseUrl?: string | null;
   showApiConfig: boolean;
   
   llmApiUrl: string;
@@ -81,6 +84,7 @@ const UploadStep: React.FC<UploadStepProps> = ({
   referenceImage, referenceImagePreview,
   
   isUploading, isValidating,
+  isUploadSubmitLocked,
   pageCount, setPageCount,
   useLongPaper, setUseLongPaper,
   frontendIncludeImages,
@@ -91,6 +95,7 @@ const UploadStep: React.FC<UploadStepProps> = ({
   setFrontendImageStyle,
   progress, progressStatus,
   error,
+  purchaseUrl,
   showApiConfig,
   
   llmApiUrl, setLlmApiUrl,
@@ -106,6 +111,7 @@ const UploadStep: React.FC<UploadStepProps> = ({
   handleUploadAndParse
 }) => {
   const { t, i18n } = useTranslation(['paper2ppt', 'common']);
+  const isSubmitBusy = isUploading || isValidating;
   const modelOptions = withModelOptions(PAPER2PPT_MODELS, model);
   const genFigModelOptions = withModelOptions(PAPER2PPT_GEN_FIG_MODELS, genFigModel);
   const genFigModelLabels: Record<string, string> = {
@@ -879,10 +885,10 @@ const UploadStep: React.FC<UploadStepProps> = ({
 
           <button 
             onClick={handleUploadAndParse} 
-            disabled={(uploadMode === 'file' && !selectedFile) || ((uploadMode === 'text' || uploadMode === 'topic') && !textContent.trim()) || isUploading} 
+            disabled={(uploadMode === 'file' && !selectedFile) || ((uploadMode === 'text' || uploadMode === 'topic') && !textContent.trim()) || isSubmitBusy || isUploadSubmitLocked} 
             className="w-full py-3 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:from-gray-600 disabled:to-gray-700 text-white font-semibold flex items-center justify-center gap-2 transition-all"
           >
-            {isUploading ? (
+            {isSubmitBusy ? (
               <><Loader2 size={18} className="animate-spin" /> {uploadMode === 'topic' ? t('upload.config.startButton.researching') : t('upload.config.startButton.parsing')}</>
             ) : (
               <><ArrowRight size={18} /> {uploadMode === 'topic' ? t('upload.config.startButton.research') : t('upload.config.startButton.parse')}</>
@@ -914,13 +920,26 @@ const UploadStep: React.FC<UploadStepProps> = ({
       {isValidating && (
         <div className="mt-4 flex items-center gap-2 text-sm text-blue-300 bg-blue-500/10 border border-blue-500/40 rounded-lg px-4 py-3 animate-pulse">
             <Loader2 size={16} className="animate-spin" />
-            <p>正在验证 API Key 有效性...</p>
+            <p>{getManagedValidationText(showApiConfig)}</p>
         </div>
       )}
 
       {error && (
-        <div className="mt-4 flex items-center gap-2 text-sm text-red-300 bg-red-500/10 border border-red-500/40 rounded-lg px-4 py-3">
-          <AlertCircle size={16} /> {error}
+        <div className="mt-4 flex items-start gap-2 text-sm text-red-300 bg-red-500/10 border border-red-500/40 rounded-lg px-4 py-3">
+          <AlertCircle size={16} className="mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <p>{error}</p>
+            {purchaseUrl && isInsufficientPointsError(error) && (
+              <a
+                href={purchaseUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-flex items-center gap-1 rounded-md border border-red-300/30 px-2.5 py-1 text-xs font-medium text-red-100 transition-colors hover:border-red-200/60 hover:text-white"
+              >
+                前往购买页获取兑换码
+              </a>
+            )}
+          </div>
         </div>
       )}
 

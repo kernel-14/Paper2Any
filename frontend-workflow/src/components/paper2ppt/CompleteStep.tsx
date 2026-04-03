@@ -62,7 +62,7 @@ const CompleteStep: React.FC<CompleteStepProps> = ({
           {generateResults.map((result, index) => (
             <div key={result.slideId} className="aspect-[16/9] rounded-lg border border-white/20 overflow-hidden bg-white/5">
               {result.afterImage ? (
-                <img src={result.afterImage} alt={`Page ${index + 1}`} className="w-full h-full object-contain" />
+                <img src={result.afterImagePreview || result.afterImage} alt={`Page ${index + 1}`} className="w-full h-full object-contain" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-gray-500 text-xs">第 {index + 1} 页</div>
               )}

@@ -24,6 +24,13 @@ import QRCodeTooltip from './QRCodeTooltip';
 import ManagedApiNotice from './ManagedApiNotice';
 import { useRuntimeBilling } from '../hooks/useRuntimeBilling';
 import VersionHistory from './paper2ppt/VersionHistory';
+import {
+  buildInsufficientPointsMessage,
+  buildQuotaExhaustedMessage,
+  getManagedValidationText,
+  isInsufficientPointsError,
+  resolvePointsPurchaseUrl,
+} from '../utils/pointsMessaging';
 
 const MANAGED_CREDENTIAL_SCOPE = 'ppt2polish';
 
@@ -48,6 +55,7 @@ interface SlideOutline {
   layout_description: string;  // 布局描述
   key_points: string[];        // 要点数组
   asset_ref: string | null;    // 资源引用（图片路径或 null）
+  asset_ref_preview_path?: string;
 }
 
 // 版本历史类型定义
@@ -62,7 +70,9 @@ interface ImageVersion {
 interface BeautifyResult {
   slideId: string;
   beforeImage: string;
+  beforeImagePreview?: string;
   afterImage: string;
+  afterImagePreview?: string;
   status: 'pending' | 'processing' | 'done' | 'failed';
   errorMessage?: string;
   userPrompt?: string;
@@ -81,6 +91,9 @@ const getFailedPageNumbers = (results: BeautifyResult[]): number[] =>
   results
     .map((result, index) => (result.status === 'failed' || !result.afterImage ? index + 1 : null))
     .filter((value): value is number => value !== null);
+
+const getPreviewPath = (item: any, key: string) =>
+  String(item?.[`${key}_preview_path`] || item?.[`${key}PreviewPath`] || '').trim();
 
 // ============== 假数据模拟 ==============
 // 模拟后端返回的数据（转换为前端格式）
@@ -178,7 +191,10 @@ const STORAGE_KEY = 'pptpolish-storage';
 const Ppt2PolishPage = () => {
   const { t, i18n } = useTranslation(['pptPolish', 'common']);
   const { user, refreshQuota } = useAuthStore();
-  const { userApiConfigRequired } = useRuntimeBilling();
+  const { userApiConfigRequired, runtimeConfig } = useRuntimeBilling();
+  const purchaseUrl = runtimeConfig.billing_mode === 'free'
+    ? resolvePointsPurchaseUrl(runtimeConfig)
+    : '';
   // 步骤状态
   const [currentStep, setCurrentStep] = useState<Step>('upload');
   
@@ -252,14 +268,11 @@ const Ppt2PolishPage = () => {
     isAnonymous: user?.is_anonymous || false,
   });
 
-  const buildInsufficientPointsMessage = (required: number, remaining: number, action: string) =>
-    `点数不足：${action}需要 ${required} 点，当前剩余 ${remaining} 点，请先购买兑换码充值。`;
-
   const ensureQuotaForAction = async (required: number, action: string) => {
     const { userId, isAnonymous } = getQuotaContext();
     const quota = await checkQuota(userId, isAnonymous);
     if (quota.remaining < required) {
-      setError(buildInsufficientPointsMessage(required, quota.remaining, action));
+      setError(buildInsufficientPointsMessage(required, quota.remaining, action, purchaseUrl));
       return false;
     }
     return true;
@@ -297,6 +310,31 @@ const Ppt2PolishPage = () => {
       // ignore parse error
     }
     return fallback;
+  };
+
+  const renderErrorAlert = (className: string = 'mt-4') => {
+    if (!error) {
+      return null;
+    }
+
+    return (
+      <div className={`${className} flex items-start gap-2 text-sm text-red-300 bg-red-500/10 border border-red-500/40 rounded-lg px-4 py-3`}>
+        <AlertCircle size={16} className="mt-0.5 shrink-0" />
+        <div className="flex-1">
+          <p>{error}</p>
+          {purchaseUrl && isInsufficientPointsError(error) && (
+            <a
+              href={purchaseUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-flex items-center gap-1 rounded-md border border-red-300/30 px-2.5 py-1 text-xs font-medium text-red-100 transition-colors hover:border-red-200/60 hover:text-white"
+            >
+              前往购买页获取兑换码
+            </a>
+          )}
+        </div>
+      </div>
+    );
   };
 
   const modelOptions = withModelOptions(PPT2POLISH_MODELS, model);
@@ -571,7 +609,7 @@ const Ppt2PolishPage = () => {
     // Check quota before proceeding
     const quota = await checkQuota(user?.id || null, user?.is_anonymous || false);
     if (quota.remaining <= 0) {
-      setError(t('errors.quota'));
+      setError(buildQuotaExhaustedMessage(purchaseUrl));
       return;
     }
 
@@ -689,15 +727,16 @@ const Ppt2PolishPage = () => {
             url.includes(item.ppt_img_path.split('/').pop() || '')
           );
           
-          return {
-            id: String(index + 1),
-            pageNum: index + 1,
-            title: `第 ${index + 1} 页`,
-            layout_description: '待编辑：请填写此页的布局描述',
-            key_points: ['待编辑：请添加要点'],
-            asset_ref: imgUrl || item.ppt_img_path || null,
-          };
-        }
+        return {
+          id: String(index + 1),
+          pageNum: index + 1,
+          title: `第 ${index + 1} 页`,
+          layout_description: '待编辑：请填写此页的布局描述',
+          key_points: ['待编辑：请添加要点'],
+          asset_ref: imgUrl || item.ppt_img_path || null,
+          asset_ref_preview_path: getPreviewPath(item, 'ppt_img_path') || getPreviewPath(item, 'asset_ref') || imgUrl || item.ppt_img_path || '',
+        };
+      }
         
         // 标准格式（pdf/text 类型）
         return {
@@ -707,6 +746,7 @@ const Ppt2PolishPage = () => {
           layout_description: item.layout_description || '',
           key_points: item.key_points || [],
           asset_ref: item.asset_ref || item.ppt_img_path || null,
+          asset_ref_preview_path: getPreviewPath(item, 'asset_ref') || getPreviewPath(item, 'ppt_img_path') || item.asset_ref || item.ppt_img_path || '',
         };
       });
       
@@ -727,7 +767,9 @@ const Ppt2PolishPage = () => {
       const results: BeautifyResult[] = convertedSlides.map((slide, index) => ({
         slideId: slide.id,
         beforeImage: slide.asset_ref || '',
+        beforeImagePreview: slide.asset_ref_preview_path || slide.asset_ref || '',
         afterImage: '',
+        afterImagePreview: '',
         status: 'pending',
         versionHistory: [],
         currentVersionIndex: 0,
@@ -858,7 +900,9 @@ const Ppt2PolishPage = () => {
     const results: BeautifyResult[] = outlineData.map((slide) => ({
       slideId: slide.id,
       beforeImage: slide.asset_ref || '',  // 确保使用真实的图片路径
+      beforeImagePreview: slide.asset_ref_preview_path || slide.asset_ref || '',
       afterImage: '', // 初始为空，等待批量生成
+      afterImagePreview: '',
       status: 'pending',
       versionHistory: [],
       currentVersionIndex: 0,
@@ -979,6 +1023,7 @@ const Ppt2PolishPage = () => {
             ...result,
             // beforeImage 保持原始 PPT 截图
             afterImage: pageImageUrl || '',
+            afterImagePreview: getPreviewPath(pageMeta, 'generated_img_path') || pageImageUrl || '',
             status: pageImageUrl ? 'done' : 'failed',
             errorMessage: pageImageUrl ? undefined : pageFailureReason,
           };
@@ -1185,6 +1230,7 @@ const Ppt2PolishPage = () => {
         ...updatedResults[index],
         status: 'done',
         afterImage: pageImageUrl || updatedResults[index].afterImage,
+        afterImagePreview: getPreviewPath(currentPageMeta, 'generated_img_path') || pageImageUrl || updatedResults[index].afterImagePreview,
         errorMessage: undefined,
         userPrompt: slidePrompt || undefined,
       };
@@ -1308,6 +1354,7 @@ const Ppt2PolishPage = () => {
         updatedResults[currentSlideIndex] = {
           ...updatedResults[currentSlideIndex],
           afterImage: data.currentImageUrl + '?t=' + Date.now(),
+          afterImagePreview: data.currentImageUrl + '?t=' + Date.now(),
           currentVersionIndex: versionNumber - 1,
         };
         setBeautifyResults(updatedResults);
@@ -1802,11 +1849,11 @@ const Ppt2PolishPage = () => {
       {isValidating && (
         <div className="mt-4 flex items-center gap-2 text-sm text-cyan-300 bg-cyan-500/10 border border-cyan-500/40 rounded-lg px-4 py-3 animate-pulse">
             <Loader2 size={16} className="animate-spin" />
-            <p>{t('errors.validating')}</p>
+            <p>{getManagedValidationText(userApiConfigRequired)}</p>
         </div>
       )}
 
-      {error && <div className="mt-4 flex items-center gap-2 text-sm text-red-300 bg-red-500/10 border border-red-500/40 rounded-lg px-4 py-3"><AlertCircle size={16} /> {error}</div>}
+      {renderErrorAlert()}
 
       {/* 示例区 */}
       {/* 示例区 */}
@@ -2023,11 +2070,7 @@ const Ppt2PolishPage = () => {
           <p className="text-gray-400">{t('beautify.pageInfo', { current: currentSlideIndex + 1, total: outlineData.length, title: currentSlide?.title })}</p>
           <p className="text-xs text-gray-500 mt-1">{t('beautify.modeInfo')}</p>
         </div>
-        {error && (
-          <div className="mb-6 flex items-center gap-2 text-sm text-red-300 bg-red-500/10 border border-red-500/40 rounded-lg px-4 py-3">
-            <AlertCircle size={16} /> {error}
-          </div>
-        )}
+        {renderErrorAlert('mb-6')}
         <div className="mb-6">
           <div className="flex gap-1">{beautifyResults.map((result, index) => (<div key={result.slideId} className={`flex-1 h-2 rounded-full transition-all ${result.status === 'done' ? 'bg-teal-400' : result.status === 'failed' ? 'bg-red-400' : result.status === 'processing' ? 'bg-gradient-to-r from-cyan-400 to-teal-400 animate-pulse' : index === currentSlideIndex ? 'bg-teal-400/50' : 'bg-white/10'}`} />))}</div>
         </div>
@@ -2035,11 +2078,11 @@ const Ppt2PolishPage = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <h4 className="text-sm text-gray-400 mb-3 flex items-center gap-2"><Eye size={14} /> {t('beautify.original')}</h4>
-              <div className="rounded-lg overflow-hidden border border-white/10 aspect-[16/9] bg-white/5 flex items-center justify-center">{currentResult?.beforeImage ? <img src={currentResult.beforeImage} alt="Before" className="max-w-full max-h-full object-contain" /> : <Loader2 size={24} className="text-gray-500 animate-spin" />}</div>
+              <div className="rounded-lg overflow-hidden border border-white/10 aspect-[16/9] bg-white/5 flex items-center justify-center">{currentResult?.beforeImage ? <img src={currentResult.beforeImagePreview || currentResult.beforeImage} alt="Before" className="max-w-full max-h-full object-contain" /> : <Loader2 size={24} className="text-gray-500 animate-spin" />}</div>
             </div>
             <div>
               <h4 className="text-sm text-gray-400 mb-3 flex items-center gap-2"><Sparkles size={14} className="text-teal-400" /> {t('beautify.result')}</h4>
-              <div className="rounded-lg overflow-hidden border border-teal-500/30 aspect-[16/9] bg-gradient-to-br from-cyan-500/10 to-teal-500/10 flex items-center justify-center">{isBeautifying ? <div className="text-center"><Loader2 size={32} className="text-teal-400 animate-spin mx-auto mb-2" /><p className="text-sm text-teal-300">{t('beautify.processing')}</p></div> : currentResult?.afterImage ? <img src={currentResult.afterImage} alt="After" className="max-w-full max-h-full object-contain" /> : currentResult?.status === 'failed' ? <div className="text-center px-6"><AlertCircle size={28} className="text-red-300 mx-auto mb-2" /><p className="text-sm text-red-200 mb-1">该页生成失败</p><p className="text-xs text-red-200/80">{currentResult.errorMessage || '请点击“重新生成”重试'}</p></div> : <span className="text-gray-500">{t('beautify.waiting')}</span>}</div>
+              <div className="rounded-lg overflow-hidden border border-teal-500/30 aspect-[16/9] bg-gradient-to-br from-cyan-500/10 to-teal-500/10 flex items-center justify-center">{isBeautifying ? <div className="text-center"><Loader2 size={32} className="text-teal-400 animate-spin mx-auto mb-2" /><p className="text-sm text-teal-300">{t('beautify.processing')}</p></div> : currentResult?.afterImage ? <img src={currentResult.afterImagePreview || currentResult.afterImage} alt="After" className="max-w-full max-h-full object-contain" /> : currentResult?.status === 'failed' ? <div className="text-center px-6"><AlertCircle size={28} className="text-red-300 mx-auto mb-2" /><p className="text-sm text-red-200 mb-1">该页生成失败</p><p className="text-xs text-red-200/80">{currentResult.errorMessage || '请点击“重新生成”重试'}</p></div> : <span className="text-gray-500">{t('beautify.waiting')}</span>}</div>
             </div>
           </div>
         </div>

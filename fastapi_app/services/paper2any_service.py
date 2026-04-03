@@ -14,7 +14,10 @@ from fastapi_app.workflow_adapters import run_paper2figure_wf_api
 from fastapi_app.utils import _to_outputs_url
 from fastapi_app.config.settings import settings
 from fastapi_app.interprocess_lock import AsyncInterProcessSemaphore
-from fastapi_app.services.managed_api_service import resolve_llm_credentials
+from fastapi_app.services.managed_api_service import (
+    resolve_image_generation_credentials,
+    resolve_llm_credentials,
+)
 from dataflow_agent.utils import get_project_root
 from dataflow_agent.logger import get_logger
 
@@ -25,6 +28,30 @@ BASE_OUTPUT_DIR = (PROJECT_ROOT / "outputs").resolve()
 
 TASK_LIMITER = AsyncInterProcessSemaphore("paper2any_service_tasks", limit=1)
 VISUAL_WORKFLOW_LIMITER = AsyncInterProcessSemaphore("sam3_visual_workflows", limit=1)
+
+
+def _normalize_tech_route_text_model(candidate: str | None) -> str:
+    """
+    技术路线图必须使用文本/SVG 模型。
+
+    前端历史配置或旧 localStorage 可能把 image-preview 模型误传到 img_gen_model_name。
+    这里做后端兜底，避免把生图模型拿去跑 SVG 文本 agent。
+    """
+    fallback = (settings.PAPER2FIGURE_TECHNICAL_MODEL or "gpt-5.4").strip()
+    value = (candidate or "").strip()
+    if not value:
+        return fallback
+
+    lowered = value.lower()
+    if any(token in lowered for token in ("image-preview", "-image", "nanobanana")):
+        log.warning(
+            "[paper2figure] invalid tech_route text model '%s', falling back to %s",
+            value,
+            fallback,
+        )
+        return fallback
+
+    return value
 
 
 class Paper2AnyService:
@@ -202,6 +229,11 @@ class Paper2AnyService:
             api_key,
             scope="paper2any",
         )
+        resolved_image_api_url, resolved_image_api_key = resolve_image_generation_credentials(
+            chat_api_url,
+            api_key,
+            scope="paper2any",
+        )
         # 1. 基础参数校验
         self._validate_input(input_type, file, file_kind, text)
 
@@ -226,14 +258,26 @@ class Paper2AnyService:
             input_dir, input_type, file, file_kind, text
         )
 
+        # paper2figure 前端历史上把 tech_route 的文本模型塞在 img_gen_model_name 里。
+        # 这里按 graph_type 分流，避免技术路线图仍被固定到 gpt-4o。
+        selected_text_model = (
+            _normalize_tech_route_text_model(img_gen_model_name)
+            if graph_type == "tech_route"
+            else settings.PAPER2FIGURE_TEXT_MODEL
+        )
+        selected_image_model = settings.PAPER2FIGURE_IMAGE_MODEL if graph_type == "tech_route" else img_gen_model_name
+
         # 4. 构造 Request
         p2f_req = Paper2FigureRequest(
             language=language,
             chat_api_url=resolved_chat_api_url,
             chat_api_key=resolved_api_key,
             api_key=resolved_api_key,
-            model="gpt-4o",
-            gen_fig_model=img_gen_model_name,
+            image_api_url=resolved_image_api_url,
+            image_api_key=resolved_image_api_key,
+            model=selected_text_model,
+            gen_fig_model=selected_image_model,
+            technical_model=selected_text_model,
             input_type=real_input_type,
             input_content=real_input_content,
             aspect_ratio="16:9",
@@ -297,6 +341,11 @@ class Paper2AnyService:
             api_key,
             scope="paper2any",
         )
+        resolved_image_api_url, resolved_image_api_key = resolve_image_generation_credentials(
+            chat_api_url,
+            api_key,
+            scope="paper2any",
+        )
         # 1. 基础参数校验
         self._validate_input(input_type, file, file_kind, text)
 
@@ -330,14 +379,26 @@ class Paper2AnyService:
             reference_image_path = str(ref_img_path)
             log.info(f"[paper2figure] Saved reference image: {reference_image_path}")
 
+        # paper2figure 前端历史上把 tech_route 的文本模型塞在 img_gen_model_name 里。
+        # 这里按 graph_type 分流，避免技术路线图仍被固定到 gpt-4o。
+        selected_text_model = (
+            _normalize_tech_route_text_model(img_gen_model_name)
+            if graph_type == "tech_route"
+            else settings.PAPER2FIGURE_TEXT_MODEL
+        )
+        selected_image_model = settings.PAPER2FIGURE_IMAGE_MODEL if graph_type == "tech_route" else img_gen_model_name
+
         # 4. 构造 Request
         p2f_req = Paper2FigureRequest(
             language=language,
             chat_api_url=resolved_chat_api_url,
             chat_api_key=resolved_api_key,
             api_key=resolved_api_key,
-            model="gpt-4o",
-            gen_fig_model=img_gen_model_name,
+            image_api_url=resolved_image_api_url,
+            image_api_key=resolved_image_api_key,
+            model=selected_text_model,
+            gen_fig_model=selected_image_model,
+            technical_model=selected_text_model,
             input_type=real_input_type,
             input_content=real_input_content,
             aspect_ratio="16:9",
@@ -416,8 +477,8 @@ class Paper2AnyService:
 
                 if fig_path:
                     # 复用 visual drawio workflow
-                    from dataflow_agent.workflow.registry import RuntimeRegistry
                     from dataflow_agent.state import Paper2DrawioState, Paper2DrawioRequest
+                    from dataflow_agent.workflow import get_workflow
 
                     sub_dir = run_dir / "image2drawio"
                     sub_dir.mkdir(parents=True, exist_ok=True)
@@ -436,7 +497,7 @@ class Paper2AnyService:
                     i2d_state.text_content = str(fig_path)
                     i2d_state.result_path = str(sub_dir)
 
-                    factory = RuntimeRegistry.get("paper2drawio_visual")
+                    factory = get_workflow("paper2drawio_visual")
                     builder = factory()
                     graph = builder.build()
                     async with VISUAL_WORKFLOW_LIMITER.hold():

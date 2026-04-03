@@ -20,6 +20,13 @@ _SCOPE_TO_SETTING_NAMES: dict[str, tuple[str, str]] = {
     "kb_deepresearch": ("KB_DEEPRESEARCH_MANAGED_API_URL", "KB_DEEPRESEARCH_MANAGED_API_KEY"),
     "paper2rebuttal": ("PAPER2REBUTTAL_MANAGED_API_URL", "PAPER2REBUTTAL_MANAGED_API_KEY"),
 }
+_SCOPE_TO_IMAGE_SETTING_NAMES: dict[str, tuple[str, str]] = {
+    scope: (
+        api_url_name.replace("_MANAGED_API_URL", "_MANAGED_IMAGE_API_URL"),
+        api_key_name.replace("_MANAGED_API_KEY", "_MANAGED_IMAGE_API_KEY"),
+    )
+    for scope, (api_url_name, api_key_name) in _SCOPE_TO_SETTING_NAMES.items()
+}
 
 
 def _normalize_scope(scope: str | None) -> str:
@@ -41,12 +48,24 @@ def _get_default_managed_llm_credentials() -> tuple[str, str]:
     )
 
 
-def _get_scoped_managed_llm_credentials(scope: str | None) -> tuple[str, str, tuple[str, str] | None]:
+def _get_default_managed_image_credentials() -> tuple[str, str]:
+    return (
+        _normalize_api_url(settings.DF_IMAGE_API_URL),
+        _normalize_api_key(settings.DF_IMAGE_API_KEY),
+    )
+
+
+def _get_scoped_managed_credentials(
+    scope: str | None,
+    *,
+    image: bool,
+) -> tuple[str, str, tuple[str, str] | None]:
     normalized_scope = _normalize_scope(scope)
     if not normalized_scope:
         return "", "", None
 
-    setting_names = _SCOPE_TO_SETTING_NAMES.get(normalized_scope)
+    mapping = _SCOPE_TO_IMAGE_SETTING_NAMES if image else _SCOPE_TO_SETTING_NAMES
+    setting_names = mapping.get(normalized_scope)
     if setting_names is None:
         return "", "", None
 
@@ -54,6 +73,21 @@ def _get_scoped_managed_llm_credentials(scope: str | None) -> tuple[str, str, tu
     api_url = _normalize_api_url(getattr(settings, api_url_name, ""))
     api_key = _normalize_api_key(getattr(settings, api_key_name, ""))
     return api_url, api_key, setting_names
+
+
+def _get_scoped_managed_llm_credentials(scope: str | None) -> tuple[str, str, tuple[str, str] | None]:
+    return _get_scoped_managed_credentials(scope, image=False)
+
+
+def _get_scoped_managed_image_credentials(scope: str | None) -> tuple[str, str, tuple[str, str] | None]:
+    return _get_scoped_managed_credentials(scope, image=True)
+
+
+def _pick_first_complete_credentials(*candidates: tuple[str, str]) -> tuple[str, str]:
+    for api_url, api_key in candidates:
+        if api_url and api_key:
+            return api_url, api_key
+    return "", ""
 
 
 def _get_any_configured_managed_llm_credentials() -> tuple[str, str]:
@@ -129,6 +163,43 @@ def get_managed_llm_credentials(*, required: bool = True, scope: str | None = No
     return api_url, api_key
 
 
+def get_managed_image_credentials(*, required: bool = True, scope: str | None = None) -> tuple[str, str]:
+    scoped_image_api_url, scoped_image_api_key, image_setting_names = _get_scoped_managed_image_credentials(scope)
+    default_image_api_url, default_image_api_key = _get_default_managed_image_credentials()
+    scoped_text_api_url, scoped_text_api_key, text_setting_names = _get_scoped_managed_llm_credentials(scope)
+    default_text_api_url, default_text_api_key = _get_default_managed_llm_credentials()
+
+    api_url, api_key = _pick_first_complete_credentials(
+        (scoped_image_api_url, scoped_image_api_key),
+        (default_image_api_url, default_image_api_key),
+        (scoped_text_api_url, scoped_text_api_key),
+        (default_text_api_url, default_text_api_key),
+    )
+
+    if required and (not api_url or not api_key):
+        normalized_scope = _normalize_scope(scope)
+        scope_hint = ""
+        if image_setting_names is not None or text_setting_names is not None:
+            hints: list[str] = []
+            if image_setting_names is not None:
+                hints.extend(image_setting_names)
+            if text_setting_names is not None:
+                hints.extend(text_setting_names)
+            scope_hint = (
+                f" for scope '{normalized_scope}'"
+                f" ({', '.join(hints)}, fallback DF_IMAGE_API_URL / DF_IMAGE_API_KEY, then DF_API_URL / DF_API_KEY)"
+            )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Managed billing mode is enabled, but backend managed image-generation credentials are not configured"
+                f"{scope_hint}"
+            ),
+        )
+
+    return api_url, api_key
+
+
 def resolve_llm_credentials(
     chat_api_url: str | None,
     api_key: str | None,
@@ -137,6 +208,17 @@ def resolve_llm_credentials(
 ) -> tuple[str, str]:
     if is_free_billing_mode():
         return get_managed_llm_credentials(required=True, scope=scope)
+    return _normalize_api_url(chat_api_url), _normalize_api_key(api_key)
+
+
+def resolve_image_generation_credentials(
+    chat_api_url: str | None,
+    api_key: str | None,
+    *,
+    scope: str | None = None,
+) -> tuple[str, str]:
+    if is_free_billing_mode():
+        return get_managed_image_credentials(required=True, scope=scope)
     return _normalize_api_url(chat_api_url), _normalize_api_key(api_key)
 
 

@@ -105,7 +105,10 @@ async def run_pdf2ppt_wf_api_local(req: Paper2PPTRequest, result_path: Path | No
     # 构造 state/request，传入前端配置的参数
     p2f_req = Paper2FigureRequest(
         chat_api_url=req.chat_api_url,
+        chat_api_key=req.chat_api_key,
         api_key=req.api_key,
+        image_api_url=req.image_api_url,
+        image_api_key=req.image_api_key,
         model=req.model,
         gen_fig_model=req.gen_fig_model,
         language=req.language,

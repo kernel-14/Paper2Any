@@ -13,6 +13,7 @@
 import { checkQuota, recordUsage, QuotaInfo } from './quotaService';
 import { uploadAndSaveFile } from './fileService';
 import { backendFetch } from './backendClient';
+import { buildQuotaExhaustedMessage } from '../utils/pointsMessaging';
 
 export interface WorkflowResult {
   success: boolean;
@@ -71,7 +72,7 @@ export async function callWorkflow(
     return {
       success: false,
       error: quota.isAuthenticated
-        ? '点数不足，请先购买兑换码并充值'
+        ? buildQuotaExhaustedMessage()
         : '请先登录后继续使用',
       quota,
     };

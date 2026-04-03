@@ -19,9 +19,12 @@ from dataflow_agent.toolkits.multimodaltool.req_img import (
     gemini_multi_image_edit_async
 )
 from dataflow_agent.toolkits.multimodaltool.ppt_tool import convert_images_dir_to_pdf_and_full_slide_ppt
+from dataflow_agent.utils.request_credentials import (
+    get_request_image_api_key,
+    get_request_image_api_url,
+)
 
 log = get_logger(__name__)
-DEFAULT_PARALLEL_LIMIT = 3
 
 
 def _ensure_result_path(state: Paper2FigureState) -> str:
@@ -56,9 +59,9 @@ def _abs_path(p: str) -> str:
 def _get_parallel_limit(page_count: int) -> int:
     raw = str(os.getenv("PAPER2PPT_PARALLEL_CONSISTENT_MAX_CONCURRENCY", "")).strip()
     try:
-        configured = int(raw) if raw else DEFAULT_PARALLEL_LIMIT
+        configured = int(raw) if raw else page_count
     except ValueError:
-        configured = DEFAULT_PARALLEL_LIMIT
+        configured = page_count
     return max(1, min(page_count, configured))
 
 
@@ -233,10 +236,10 @@ def create_paper2ppt_parallel_consistent_graph() -> GenericGraphBuilder:  # noqa
         return state
 
     def _route(state: Paper2FigureState) -> str:
-        if getattr(state.request, "all_edited_down", False):
-            return "export_ppt_assets"
         if not getattr(state, "gen_down", False):
             return "generate_pages"
+        if getattr(state.request, "all_edited_down", False):
+            return "export_ppt_assets"
         return "edit_single_page"
 
     async def generate_pages(state: Paper2FigureState) -> Paper2FigureState:
@@ -279,6 +282,8 @@ def create_paper2ppt_parallel_consistent_graph() -> GenericGraphBuilder:  # noqa
         style = getattr(state.request, "style", None) or "kartoon"
         aspect_ratio = getattr(state, "aspect_ratio", None) or "16:9"
         image_resolution = getattr(state.request, "image_resolution", None) or "2K"
+        image_api_url = get_request_image_api_url(state.request)
+        image_api_key = get_request_image_api_key(state.request)
         
         page_items = state.pagecontent or []
         if not page_items:
@@ -333,8 +338,8 @@ def create_paper2ppt_parallel_consistent_graph() -> GenericGraphBuilder:  # noqa
                             prompt=prompt,
                             image_paths=[ref_img_path, image_path],
                             save_path=save_path,
-                            api_url=state.request.chat_api_url,
-                            api_key=state.request.chat_api_key or os.getenv("DF_API_KEY"),
+                            api_url=image_api_url,
+                            api_key=image_api_key,
                             model=state.request.gen_fig_model,
                             aspect_ratio=aspect_ratio,
                             resolution=image_resolution,
@@ -351,8 +356,8 @@ def create_paper2ppt_parallel_consistent_graph() -> GenericGraphBuilder:  # noqa
                             prompt=prompt,
                             save_path=save_path,
                             aspect_ratio=aspect_ratio,
-                            api_url=state.request.chat_api_url,
-                            api_key=state.request.chat_api_key or os.getenv("DF_API_KEY"),
+                            api_url=image_api_url,
+                            api_key=image_api_key,
                             model=state.request.gen_fig_model,
                             image_path=image_path,
                             use_edit=True,
@@ -412,8 +417,8 @@ def create_paper2ppt_parallel_consistent_graph() -> GenericGraphBuilder:  # noqa
                             prompt=final_prompt,
                             image_paths=[ref_img_path, asset_path],
                             save_path=save_path,
-                            api_url=state.request.chat_api_url,
-                            api_key=state.request.chat_api_key or os.getenv("DF_API_KEY"),
+                            api_url=image_api_url,
+                            api_key=image_api_key,
                             model=state.request.gen_fig_model,
                             aspect_ratio=aspect_ratio,
                             resolution=image_resolution,
@@ -438,8 +443,8 @@ def create_paper2ppt_parallel_consistent_graph() -> GenericGraphBuilder:  # noqa
                             prompt=final_prompt,
                             save_path=save_path,
                             aspect_ratio=aspect_ratio,
-                            api_url=state.request.chat_api_url,
-                            api_key=state.request.chat_api_key or os.getenv("DF_API_KEY"),
+                            api_url=image_api_url,
+                            api_key=image_api_key,
                             model=state.request.gen_fig_model,
                             image_path=ref_img_path,  # Use ref as base
                             use_edit=True,
@@ -470,8 +475,8 @@ def create_paper2ppt_parallel_consistent_graph() -> GenericGraphBuilder:  # noqa
                         prompt=final_prompt,
                         save_path=save_path,
                         aspect_ratio=aspect_ratio,
-                        api_url=state.request.chat_api_url,
-                        api_key=state.request.chat_api_key or os.getenv("DF_API_KEY"),
+                        api_url=image_api_url,
+                        api_key=image_api_key,
                         model=state.request.gen_fig_model,
                         image_path=asset_path,
                         use_edit=is_edit_originally,
@@ -637,6 +642,8 @@ def create_paper2ppt_parallel_consistent_graph() -> GenericGraphBuilder:  # noqa
         aspect_ratio = getattr(state, "aspect_ratio", None) or "16:9"
         style = getattr(state.request, "style", None) or "kartoon"
         image_resolution = getattr(state.request, "image_resolution", None) or "2K"
+        image_api_url = get_request_image_api_url(state.request)
+        image_api_key = get_request_image_api_key(state.request)
 
         # 检查 ref_img
         user_ref_img = getattr(state.request, "ref_img", None)
@@ -675,8 +682,8 @@ def create_paper2ppt_parallel_consistent_graph() -> GenericGraphBuilder:  # noqa
                 prompt=full_prompt,
                 image_paths=[user_ref_img, old_path],
                 save_path=temp_save_path,
-                api_url=state.request.chat_api_url,
-                api_key=state.request.chat_api_key or os.getenv("DF_API_KEY"),
+                api_url=image_api_url,
+                api_key=image_api_key,
                 model=state.request.gen_fig_model,
                 aspect_ratio=aspect_ratio,
                 resolution=image_resolution,
@@ -700,8 +707,8 @@ def create_paper2ppt_parallel_consistent_graph() -> GenericGraphBuilder:  # noqa
                 prompt=full_prompt,
                 save_path=temp_save_path,
                 aspect_ratio=aspect_ratio,
-                api_url=state.request.chat_api_url,
-                api_key=state.request.chat_api_key or os.getenv("DF_API_KEY"),
+                api_url=image_api_url,
+                api_key=image_api_key,
                 model=state.request.gen_fig_model,
                 image_path=old_path,
                 use_edit=True,

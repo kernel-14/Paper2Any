@@ -76,6 +76,7 @@ _RATE_LIMIT_RULES: dict[str, RateLimitRule] = {
     "/api/v1/pdf2ppt/generate": RateLimitRule(limit=8, window_seconds=300, bucket="pdf2ppt"),
     "/api/v1/image2ppt/generate": RateLimitRule(limit=12, window_seconds=300, bucket="image2ppt"),
     "/api/v1/image2drawio/generate": RateLimitRule(limit=12, window_seconds=300, bucket="image2drawio"),
+    "/api/v1/mindmap/generate": RateLimitRule(limit=16, window_seconds=300, bucket="mindmap-generate"),
     "/api/v1/paper2drawio/generate": RateLimitRule(limit=10, window_seconds=300, bucket="paper2drawio-generate"),
     "/api/v1/paper2drawio/chat": RateLimitRule(limit=24, window_seconds=300, bucket="paper2drawio-chat"),
     "/api/v1/paper2poster/generate": RateLimitRule(limit=8, window_seconds=300, bucket="paper2poster"),
@@ -109,10 +110,11 @@ _WORKFLOW_GUARDS: dict[str, WorkflowGuard] = {
     "/api/v1/pdf2ppt/generate": WorkflowGuard("pdf2ppt"),
     "/api/v1/image2ppt/generate": WorkflowGuard("image2ppt"),
     "/api/v1/image2drawio/generate": WorkflowGuard("image2drawio"),
+    "/api/v1/mindmap/generate": WorkflowGuard("kb_mindmap", consume_before_execute=False),
     "/api/v1/paper2drawio/generate": WorkflowGuard("paper2drawio"),
     "/api/v1/paper2drawio/chat": WorkflowGuard("paper2drawio"),
     "/api/v1/paper2poster/generate": WorkflowGuard("paper2poster"),
-    "/api/v1/paper2video/generate-subtitle": WorkflowGuard("paper2video"),
+    "/api/v1/paper2video/generate-subtitle": WorkflowGuard("paper2video", consume_before_execute=False),
     "/api/v1/paper2video/generate-video": WorkflowGuard("paper2video"),
     "/api/v1/paper2video": WorkflowGuard("paper2video"),
     "/api/v1/paper2citation/author/detail": WorkflowGuard("paper2citation"),
@@ -247,6 +249,12 @@ async def _resolve_workflow_charge_decision(
     user: Optional[AuthUser],
     guest_id: str,
 ) -> Optional[WorkflowChargeDecision]:
+    if path == "/api/v1/paper2video/generate-subtitle":
+        return WorkflowChargeDecision(workflow_type=workflow_guard.workflow_type, amount=0)
+
+    if path == "/api/v1/mindmap/generate":
+        return WorkflowChargeDecision(workflow_type=workflow_guard.workflow_type, amount=0)
+
     if not path.startswith("/api/v1/paper2ppt/"):
         amount = _resolve_requested_amount(request, workflow_guard.workflow_type)
         return WorkflowChargeDecision(workflow_type=workflow_guard.workflow_type, amount=amount)
@@ -390,8 +398,10 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
                     )
                 else:
                     quota = billing_service.get_quota(user=user, guest_id=guest_id)
-                    required = decision.amount or max(1, int(get_workflow_cost(decision.workflow_type, default=1)))
-                    if int(quota.get("remaining", 0) or 0) < required:
+                    required = decision.amount if decision.amount is not None else max(
+                        1, int(get_workflow_cost(decision.workflow_type, default=1))
+                    )
+                    if required > 0 and int(quota.get("remaining", 0) or 0) < required:
                         raise HTTPException(status_code=402, detail="Insufficient points")
             except HTTPException as exc:
                 return _billing_error_response(exc)

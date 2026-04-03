@@ -15,6 +15,7 @@ from fastapi import UploadFile, Request
 from dataflow_agent.state import Paper2DrawioState, Paper2DrawioRequest
 from dataflow_agent.toolkits.drawio_tools import wrap_xml, extract_cells
 from dataflow_agent.toolkits.multimodaltool.mineru_tool import run_mineru_pdf_extract_http
+from dataflow_agent.workflow import get_workflow
 from dataflow_agent.logger import get_logger
 from fastapi_app.config.settings import settings
 from fastapi_app.interprocess_lock import AsyncInterProcessSemaphore
@@ -103,8 +104,6 @@ class Paper2DrawioService:
             result_path=str(result_dir),
         )
 
-        from dataflow_agent.workflow.registry import RuntimeRegistry
-
         try:
             workflow_name = "paper2drawio_visual" if use_sam3_workflow else "paper2drawio_semantic"
             limiter = VISUAL_WORKFLOW_LIMITER if use_sam3_workflow else SEMANTIC_WORKFLOW_LIMITER
@@ -112,7 +111,7 @@ class Paper2DrawioService:
                 log.info(
                     f"[paper2drawio] selected workflow={workflow_name}, input_type={workflow_input_type}, model={candidate_model}"
                 )
-                factory = RuntimeRegistry.get(workflow_name)
+                factory = get_workflow(workflow_name)
                 builder = factory()
                 graph = builder.build()
                 final_state = await graph.ainvoke(state)
@@ -339,11 +338,9 @@ class Paper2DrawioService:
             text_content=message,
         )
 
-        from dataflow_agent.workflow.registry import RuntimeRegistry
-
         try:
-            async with task_semaphore:
-                factory = RuntimeRegistry.get("paper2drawio_semantic")
+            async with SEMANTIC_WORKFLOW_LIMITER.hold():
+                factory = get_workflow("paper2drawio_semantic")
                 builder = factory()
                 graph = builder.build()
                 final_state = await graph.ainvoke(state)

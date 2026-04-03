@@ -39,6 +39,11 @@ const GenerateStep: React.FC<GenerateStepProps> = ({
 }) => {
   const currentSlide = outlineData[currentSlideIndex];
   const currentResult = generateResults[currentSlideIndex];
+  const confirmDisabledReason = isGenerating
+    ? '页面仍在生成中'
+    : currentResult?.status !== 'done'
+      ? '当前页尚未完成生成'
+      : '';
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -88,7 +93,7 @@ const GenerateStep: React.FC<GenerateStepProps> = ({
                 </p>
               </div>
             ) : currentResult?.afterImage ? (
-              <img src={currentResult.afterImage} alt="Generated" className="w-full h-full object-contain" />
+              <img src={currentResult.afterImagePreview || currentResult.afterImage} alt="Generated" className="w-full h-full object-contain" />
             ) : (
               <div className="text-center"><FileText size={32} className="text-gray-500 mx-auto mb-2" /><span className="text-gray-500">等待生成</span></div>
             )}
@@ -132,11 +137,17 @@ const GenerateStep: React.FC<GenerateStepProps> = ({
           >
             <ArrowLeft size={18} /> 上一页
           </button>
-          <button onClick={handleConfirmSlide} disabled={isGenerating || currentResult?.status !== 'done'} className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold flex items-center gap-2 disabled:opacity-50">
+          <button onClick={handleConfirmSlide} disabled={isGenerating || currentResult?.status !== 'done'} title={confirmDisabledReason || undefined} className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold flex items-center gap-2 disabled:opacity-50">
             <CheckCircle2 size={18} /> {currentSlideIndex < outlineData.length - 1 ? '确认并继续' : '完成生成'}
           </button>
         </div>
       </div>
+
+      {confirmDisabledReason ? (
+        <div className="mt-2 text-right text-xs text-purple-200/60">
+          {confirmDisabledReason}
+        </div>
+      ) : null}
 
       {error && (
         <div className="mt-4 flex items-center gap-2 text-sm text-red-300 bg-red-500/10 border border-red-500/40 rounded-lg px-4 py-3">

@@ -222,10 +222,24 @@ const FrontendSlidePreview: React.FC<FrontendSlidePreviewProps> = ({
       <div
         ref={captureRef}
         className={className}
-        style={{ width: `${DESIGN_WIDTH}px`, height: `${DESIGN_HEIGHT}px` }}
+        style={{
+          width: `${DESIGN_WIDTH}px`,
+          height: `${DESIGN_HEIGHT}px`,
+          display: 'block',
+          overflow: 'hidden',
+          background: '#07101f',
+        }}
       >
         <div
-          className="w-full h-full overflow-hidden rounded-[28px] bg-[#0b1020] shadow-[0_20px_60px_rgba(0,0,0,0.3)]"
+          style={{
+            width: '100%',
+            height: '100%',
+            display: 'block',
+            overflow: 'hidden',
+            borderRadius: '28px',
+            background: '#0b1020',
+            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
+          }}
           dangerouslySetInnerHTML={{ __html: buildFrontendSlideMarkup(slide) }}
         />
       </div>

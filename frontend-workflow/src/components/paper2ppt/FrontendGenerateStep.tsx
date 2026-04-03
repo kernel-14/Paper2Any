@@ -75,6 +75,26 @@ const FrontendGenerateStep: React.FC<FrontendGenerateStepProps> = ({
   const currentSlide = frontendSlides[currentSlideIndex];
   const outlineSlide = outlineData[currentSlideIndex];
   const isCodeDirty = draftHtml !== (currentSlide?.htmlTemplate || '') || draftCss !== (currentSlide?.cssCode || '');
+  const busyMessage = taskMessage || (currentSlide?.status === 'processing' ? '当前页仍在生成中，请稍候。' : '后台任务仍在处理中，请稍候。');
+  const reviewStatusMessage = isReviewing
+    ? taskMessage || '当前页正在进行视觉检查，确认并继续会在检查结束后解锁。'
+    : taskMessage || '';
+  const reviewDisabledReason = !currentSlide
+    ? '当前页尚未生成'
+    : isGenerating
+      ? busyMessage
+      : isReviewing
+        ? '当前页正在进行视觉检查'
+        : '';
+  const confirmDisabledReason = !currentSlide
+    ? '当前页尚未生成'
+    : isGenerating
+      ? busyMessage
+      : isReviewing
+        ? '当前页正在进行视觉检查，检查完成后才能确认并继续'
+        : currentSlide.status !== 'done'
+          ? '当前页尚未完成生成'
+          : '';
 
   useEffect(() => {
     setDraftHtml(currentSlide?.htmlTemplate || '');
@@ -109,6 +129,20 @@ const FrontendGenerateStep: React.FC<FrontendGenerateStepProps> = ({
           ))}
         </div>
       </div>
+
+      {taskMessage ? (
+        <div className="mb-4 rounded-xl border border-cyan-400/20 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100/90">
+          <div className="flex items-center gap-2 font-medium">
+            {(isGenerating || isReviewing) ? <Loader2 size={14} className="animate-spin" /> : <AlertCircle size={14} />}
+            <span>{taskMessage}</span>
+          </div>
+          {(isGenerating || isReviewing) ? (
+            <div className="mt-1 text-xs leading-6 text-cyan-100/70">
+              后台任务完成后，当前页的继续按钮会自动恢复可点击。
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-6">
         <div className="space-y-4">
@@ -150,7 +184,23 @@ const FrontendGenerateStep: React.FC<FrontendGenerateStepProps> = ({
 
             <div className="rounded-2xl overflow-hidden border border-cyan-500/20 bg-black/20">
               {panelMode === 'preview' ? (
-                isGenerating && currentSlide?.status === 'processing' ? (
+                isReviewing ? (
+                  <div className="aspect-[16/9] flex flex-col items-center justify-center text-center px-6">
+                    <Loader2 size={40} className="text-cyan-400 animate-spin mb-3" />
+                    <p className="text-base text-cyan-100">视觉检查正在进行中...</p>
+                    <p className="text-xs text-gray-500 mt-1 max-w-lg">
+                      {reviewStatusMessage}
+                    </p>
+                  </div>
+                ) : currentSlide?.review?.status === 'repairing' ? (
+                  <div className="aspect-[16/9] flex flex-col items-center justify-center text-center px-6">
+                    <Loader2 size={40} className="text-cyan-400 animate-spin mb-3" />
+                    <p className="text-base text-cyan-100">当前页正在自动修复...</p>
+                    <p className="text-xs text-gray-500 mt-1 max-w-lg">
+                      {currentSlide.review.summary || '请稍候，修复完成后会恢复可继续操作。'}
+                    </p>
+                  </div>
+                ) : isGenerating && currentSlide?.status === 'processing' ? (
                   <div className="aspect-[16/9] flex flex-col items-center justify-center text-center">
                     <Loader2 size={40} className="text-cyan-400 animate-spin mb-3" />
                     <p className="text-base text-cyan-200">正在生成这一页的前端代码...</p>
@@ -194,6 +244,7 @@ const FrontendGenerateStep: React.FC<FrontendGenerateStepProps> = ({
                           setCodeStatus(ok ? '代码已应用到当前页。' : null);
                         }}
                         disabled={isGenerating || isReviewing || !currentSlide}
+                        title={reviewDisabledReason || undefined}
                         className="px-3 py-1.5 rounded-lg bg-cyan-500 text-white text-xs font-medium flex items-center gap-1 disabled:opacity-50"
                       >
                         <ShieldCheck size={14} /> 应用代码
@@ -217,6 +268,7 @@ const FrontendGenerateStep: React.FC<FrontendGenerateStepProps> = ({
                           await handleDebugCodeEdit(draftHtml, draftCss);
                         }}
                         disabled={isGenerating || isReviewing || !currentSlide}
+                        title={reviewDisabledReason || undefined}
                         className="px-3 py-1.5 rounded-lg border border-amber-400/30 bg-amber-500/10 text-amber-100 text-xs font-medium flex items-center gap-1 disabled:opacity-50"
                       >
                         {isGenerating ? <Loader2 size={14} className="animate-spin" /> : <Code2 size={14} />}
@@ -258,6 +310,18 @@ const FrontendGenerateStep: React.FC<FrontendGenerateStepProps> = ({
             <div className="mt-3 rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-4 py-3 text-xs text-cyan-100/90">
               批量生成阶段会在后端并行生成页面代码，并复用同一套 deck theme，减少每页风格漂移。
             </div>
+
+            {(isReviewing || currentSlide?.review?.status === 'repairing') && (
+              <div className="mt-3 rounded-xl border border-cyan-400/25 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100/95">
+                <div className="flex items-center gap-2 font-medium">
+                  <Loader2 size={14} className="animate-spin" />
+                  <span>{reviewStatusMessage || '当前页正在进行视觉检查，请稍候。'}</span>
+                </div>
+                <div className="mt-1 text-xs leading-6 text-cyan-100/75">
+                  检查期间“视觉检查并修复”和“确认并继续”会暂时锁定，结束后会恢复可点击。
+                </div>
+              </div>
+            )}
 
             {currentSlide?.review && currentSlide.review.status !== 'idle' && (
               <div
@@ -301,11 +365,15 @@ const FrontendGenerateStep: React.FC<FrontendGenerateStepProps> = ({
               <button
                 onClick={handleReviewSlide}
                 disabled={isGenerating || isReviewing || !currentSlide}
+                title={reviewDisabledReason || undefined}
                 className="px-4 py-2 rounded-lg border border-cyan-400/30 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-100 text-sm flex items-center gap-2 disabled:opacity-50"
               >
                 {isReviewing ? <Loader2 size={14} className="animate-spin" /> : <ScanSearch size={14} />}
                 视觉检查并修复
               </button>
+              {reviewDisabledReason ? (
+                <span className="w-full text-xs text-cyan-100/70">{reviewDisabledReason}</span>
+              ) : null}
             </div>
           </div>
         </div>
@@ -430,12 +498,19 @@ const FrontendGenerateStep: React.FC<FrontendGenerateStepProps> = ({
           <button
             onClick={handleConfirmSlide}
             disabled={isGenerating || currentSlide?.status !== 'done'}
+            title={confirmDisabledReason || undefined}
             className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-cyan-500 to-sky-500 text-white font-semibold flex items-center gap-2 disabled:opacity-50"
           >
             <CheckCircle2 size={18} /> {currentSlideIndex < outlineData.length - 1 ? '确认并继续' : '完成生成'}
           </button>
         </div>
       </div>
+
+      {confirmDisabledReason ? (
+        <div className="mt-2 text-right text-xs text-cyan-100/60">
+          {confirmDisabledReason}
+        </div>
+      ) : null}
 
       {error && (
         <div className="mt-4 flex items-center gap-2 text-sm text-red-300 bg-red-500/10 border border-red-500/40 rounded-lg px-4 py-3">

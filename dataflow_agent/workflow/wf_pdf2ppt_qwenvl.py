@@ -43,6 +43,10 @@ from dataflow_agent.toolkits.multimodaltool.sam3_tool import (
 )
 from dataflow_agent.toolkits.multimodaltool.bg_tool import local_tool_for_bg_remove, free_bg_rm_model
 from dataflow_agent.toolkits.multimodaltool.req_img import generate_or_edit_and_save_image_async
+from dataflow_agent.utils.request_credentials import (
+    get_request_image_api_key,
+    get_request_image_api_url,
+)
 from dataflow_agent.toolkits.multimodaltool.ocr_config import get_ocr_api_credentials
 from dataflow_agent.toolkits.multimodaltool.ocr_utils import extract_bbox_items
 from dataflow_agent.toolkits.multimodaltool import ppt_tool
@@ -870,8 +874,8 @@ def create_pdf2ppt_qwenvl_graph() -> GenericGraphBuilder:
         # API 配置
         req_cfg = getattr(state, "request", None) or {}
         if not isinstance(req_cfg, dict): req_cfg = req_cfg.__dict__ if hasattr(req_cfg, "__dict__") else {}
-        api_key = req_cfg.get("api_key") or os.getenv("DF_API_KEY")
-        api_url = req_cfg.get("chat_api_url") or "https://api.apiyi.com"
+        api_key = get_request_image_api_key(getattr(state, "request", None))
+        api_url = get_request_image_api_url(getattr(state, "request", None)) or "https://api.apiyi.com"
         model_name = req_cfg.get("gen_fig_model") or "gemini-3-pro-image-preview"
         is_comfly = "comfly" in str(api_url).lower()
         

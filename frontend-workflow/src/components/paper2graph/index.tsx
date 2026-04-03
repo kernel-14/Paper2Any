@@ -7,6 +7,9 @@ import {
   DEFAULT_PAPER2FIGURE_MODELS,
   DEFAULT_IMAGE2DRAWIO_GEN_FIG_MODEL,
   DEFAULT_IMAGE2DRAWIO_VLM_MODEL,
+  PAPER2FIGURE_EXP_DATA_MODELS,
+  PAPER2FIGURE_MODEL_ARCH_MODELS,
+  PAPER2FIGURE_TECH_ROUTE_MODELS,
 } from '../../config/models';
 import { checkQuota, recordUsage } from '../../services/quotaService';
 import { verifyLlmConnection } from '../../services/llmService';
@@ -269,6 +272,19 @@ const Paper2FigurePage: React.FC<Paper2FigurePageProps> = ({
     return value ? normalizeBackendAssetUrl(value) : value ?? '';
   }, []);
 
+  const normalizeModelForGraphType = useCallback((candidate: string | undefined, nextGraphType: GraphType) => {
+    const allowed =
+      nextGraphType === 'tech_route'
+        ? PAPER2FIGURE_TECH_ROUTE_MODELS
+        : nextGraphType === 'exp_data'
+          ? PAPER2FIGURE_EXP_DATA_MODELS
+          : PAPER2FIGURE_MODEL_ARCH_MODELS;
+    if (candidate && allowed.includes(candidate)) {
+      return candidate;
+    }
+    return DEFAULT_PAPER2FIGURE_MODELS[nextGraphType] || DEFAULT_PAPER2FIGURE_MODELS.model_arch;
+  }, []);
+
   // 从 localStorage 恢复配置
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -303,7 +319,7 @@ const Paper2FigurePage: React.FC<Paper2FigurePageProps> = ({
         if (saved.style) setStyle(saved.style);
         if (saved.figureComplex) setFigureComplex(saved.figureComplex);
         if (saved.resolution) setResolution(saved.resolution);
-        if (saved.model) setModel(saved.model);
+        if (saved.model) setModel(normalizeModelForGraphType(saved.model, saved.graphType && (!allowedGraphTypes?.length || allowedGraphTypes.includes(saved.graphType)) ? saved.graphType : graphType));
 
         // API settings: prioritize user-specific settings from apiSettingsService
         const userApiSettings = getApiSettings(user?.id || null);
@@ -806,7 +822,9 @@ const Paper2FigurePage: React.FC<Paper2FigurePageProps> = ({
       // Step 0: Verify LLM Connection first
       setIsValidating(true);
       setError(null);
-      await verifyLlmConnection(llmApiUrl, apiKey, import.meta.env.VITE_DEFAULT_LLM_MODEL || "deepseek-v3.2");
+      if (userApiConfigRequired) {
+        await verifyLlmConnection(llmApiUrl, apiKey, model);
+      }
       setIsValidating(false);
 
       setIsLoading(true);

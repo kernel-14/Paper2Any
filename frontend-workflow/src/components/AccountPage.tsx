@@ -335,7 +335,7 @@ export function AccountPage() {
                     <span className="font-medium">点数兑换</span>
                   </div>
                   <p className="text-sm text-gray-400">
-                    点数不足时，请先购买兑换码，再回到这里兑换加点。
+                    点数不足时，可先前往购买页获取兑换码，再回到这里兑换加点。
                   </p>
                   <div className="space-y-3">
                     <input
@@ -456,7 +456,7 @@ export function AccountPage() {
                   </>
                 ) : (
                   <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/10 px-4 py-4 text-sm text-cyan-100">
-                    后端托管模式已开启。前端页面中的业务模型调用将自动使用服务器 `.env` 中的配置，不再依赖当前浏览器保存的 API Key。
+                    后端托管模型已开启。功能调用会消耗点数，无需手动填写 API URL 或 API Key；若点数不足，可前往购买页获取兑换码，再到账户页兑换加点。
                   </div>
                 )}
               </div>

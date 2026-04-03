@@ -21,12 +21,21 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from script.cli_env import load_project_env
 from dataflow_agent.logger import get_logger
 from dataflow_agent.state import Paper2FigureState, Paper2FigureRequest
 from dataflow_agent.workflow import run_workflow
 from dataflow_agent.utils import get_project_root
 
+load_project_env()
+
 log = get_logger(__name__)
+
+
+def _state_get(state, key: str, default=None):
+    if isinstance(state, dict):
+        return state.get(key, default)
+    return getattr(state, key, default)
 
 
 def parse_args():
@@ -278,7 +287,7 @@ def print_results(final_state: Paper2FigureState, output_dir: Path):
     log.info("Output Directory: %s", output_dir)
 
     # Check for PPT PDF file
-    ppt_pdf_path = getattr(final_state, "ppt_pdf_path", None)
+    ppt_pdf_path = _state_get(final_state, "ppt_pdf_path", None)
     if ppt_pdf_path and os.path.exists(ppt_pdf_path):
         log.info("Beautified PPT (PDF): %s", ppt_pdf_path)
 

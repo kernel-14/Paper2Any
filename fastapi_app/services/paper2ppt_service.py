@@ -94,12 +94,16 @@ paper2ppt 业务 Service 层
 函数级 docstring 里会详细说明每个参数的含义和使用约定。
 """
 
+from uuid import uuid4
+
 import copy
+import hashlib
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, Request, UploadFile
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from fastapi_app.schemas import (
     FullPipelineRequest,
@@ -107,7 +111,10 @@ from fastapi_app.schemas import (
     PageContentRequest,
     PPTGenerationRequest,
 )
-from fastapi_app.services.managed_api_service import resolve_llm_credentials
+from fastapi_app.services.managed_api_service import (
+    resolve_image_generation_credentials,
+    resolve_llm_credentials,
+)
 from fastapi_app.utils import (
     _to_outputs_url,
     get_outputs_root,
@@ -126,6 +133,11 @@ log = get_logger(__name__)
 
 PROJECT_ROOT = get_project_root()
 BASE_OUTPUT_DIR = get_outputs_root()
+_PREVIEW_MAX_SIDE = 1280
+_PREVIEW_SMALL_FILE_BYTES = 900 * 1024
+_PREVIEW_JPEG_QUALITY = 82
+_PIL_RESAMPLING = getattr(Image, "Resampling", Image)
+_PIL_LANCZOS = _PIL_RESAMPLING.LANCZOS
 
 
 class Paper2PPTService:
@@ -190,7 +202,6 @@ class Paper2PPTService:
             req.api_key,
             scope=credential_scope,
         )
-
         p2ppt_req = Paper2PPTRequest(
             language=req.language,
             chat_api_url=resolved_chat_api_url,
@@ -214,7 +225,7 @@ class Paper2PPTService:
         resp_dict = resp_model.model_dump()
         if request is not None:
             resp_dict["pagecontent"] = self._convert_pagecontent_paths_to_urls(
-                resp_dict.get("pagecontent", []), request
+                resp_dict.get("pagecontent", []), request, resp_model.result_path
             )
         if request is not None:
             resp_dict["all_output_files"] = self._collect_output_files_as_urls(resp_model.result_path, request)
@@ -243,7 +254,6 @@ class Paper2PPTService:
             req.api_key,
             scope=credential_scope,
         )
-
         p2ppt_req = Paper2PPTRequest(
             language=req.language,
             chat_api_url=resolved_chat_api_url,
@@ -273,7 +283,7 @@ class Paper2PPTService:
         resp_dict = resp_model.model_dump()
         if request is not None:
             resp_dict["pagecontent"] = self._convert_pagecontent_paths_to_urls(
-                resp_dict.get("pagecontent", []), request
+                resp_dict.get("pagecontent", []), request, resp_model.result_path
             )
         if request is not None:
             resp_dict["all_output_files"] = self._collect_output_files_as_urls(resp_model.result_path, request)
@@ -317,6 +327,11 @@ class Paper2PPTService:
             req.api_key,
             scope=credential_scope,
         )
+        resolved_image_api_url, resolved_image_api_key = resolve_image_generation_credentials(
+            req.chat_api_url,
+            req.api_key,
+            scope=credential_scope,
+        )
 
         # 校验编辑/生成模式
         if get_down_bool:
@@ -336,6 +351,8 @@ class Paper2PPTService:
             credential_scope=credential_scope,
             chat_api_key=resolved_api_key,
             api_key=resolved_api_key,
+            image_api_url=resolved_image_api_url,
+            image_api_key=resolved_image_api_key,
             model=req.model,
             gen_fig_model=req.img_gen_model_name,
             input_type="PDF",
@@ -383,6 +400,11 @@ class Paper2PPTService:
             req.api_key,
             scope=credential_scope,
         )
+        resolved_image_api_url, resolved_image_api_key = resolve_image_generation_credentials(
+            req.chat_api_url,
+            req.api_key,
+            scope=credential_scope,
+        )
 
         from fastapi_app.schemas import Paper2PPTRequest  # 局部导入避免循环
 
@@ -392,6 +414,8 @@ class Paper2PPTService:
             credential_scope=credential_scope,
             chat_api_key=resolved_api_key,
             api_key=resolved_api_key,
+            image_api_url=resolved_image_api_url,
+            image_api_key=resolved_image_api_key,
             model=req.model,
             gen_fig_model=req.img_gen_model_name,
             input_type=wf_input_type,
@@ -412,7 +436,7 @@ class Paper2PPTService:
             if resp_dict.get("ppt_pptx_path"):
                 resp_dict["ppt_pptx_path"] = _to_outputs_url(resp_dict["ppt_pptx_path"], request)
             resp_dict["pagecontent"] = self._convert_pagecontent_paths_to_urls(
-                resp_dict.get("pagecontent", []), request
+                resp_dict.get("pagecontent", []), request, resp_model.result_path
             )
 
             resp_dict["all_output_files"] = self._collect_output_files_as_urls(resp_model.result_path, request)
@@ -424,21 +448,22 @@ class Paper2PPTService:
     # ---------------- 内部工具方法 ---------------- #
 
     def _create_timestamp_run_dir(self, email: Optional[str]) -> Path:
-        """根据当前时间戳和邮箱创建本次请求的根输出目录。
+        """根据邮箱创建本次请求的唯一输出目录。
 
         目录结构：
-            outputs/{email or 'default'}/paper2ppt/<timestamp>/
+            outputs/{email or 'default'}/paper2ppt/<run_id>/
 
         说明：
         - email 为 None 或空字符串时，使用 "default" 作为子目录名；
+        - run_id 使用纳秒时间戳 + 随机后缀，避免并发请求撞目录；
         - 始终在 PROJECT_ROOT / outputs 下创建目录，保证和原始实现兼容。
         """
         import time
 
-        ts = int(time.time())
+        run_id = f"{time.time_ns()}-{uuid4().hex[:8]}"
         # 如果有 email，则使用 email，否则使用 default
         code = email or "default"
-        run_dir = BASE_OUTPUT_DIR / code / "paper2ppt" / str(ts)
+        run_dir = BASE_OUTPUT_DIR / code / "paper2ppt" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
         return run_dir
 
@@ -472,7 +497,7 @@ class Paper2PPTService:
             if normalized.get("ppt_pptx_path"):
                 normalized["ppt_pptx_path"] = _to_outputs_url(normalized["ppt_pptx_path"], request)
             normalized["pagecontent"] = self._convert_pagecontent_paths_to_urls(
-                normalized.get("pagecontent", []), request
+                normalized.get("pagecontent", []), request, result_path
             )
             normalized["all_output_files"] = self._collect_output_files_as_urls(result_path, request)
         else:
@@ -530,10 +555,18 @@ class Paper2PPTService:
         self,
         pagecontent: List[Dict[str, Any]],
         request: Request,
+        result_path: str | Path | None = None,
     ) -> List[Dict[str, Any]]:
         """Convert local output paths inside pagecontent to browser-accessible URLs."""
         if not pagecontent:
             return pagecontent
+
+        base_dir: Path | None = None
+        if result_path:
+            try:
+                base_dir = self.resolve_result_path(str(result_path))
+            except HTTPException:
+                base_dir = None
 
         keys = {
             "ppt_img_path",
@@ -553,14 +586,93 @@ class Paper2PPTService:
                 value = item.get(key)
                 if not value or not isinstance(value, str):
                     continue
-                # Skip already-normalized URLs
-                if value.startswith("http") or value.startswith("/outputs/"):
+                local_path = self._try_resolve_output_file(value)
+                if not local_path:
                     continue
-                # Only convert when path is absolute or explicitly points into outputs
-                if os.path.isabs(value) or "/outputs/" in value or value.startswith("outputs/"):
-                    item[key] = _to_outputs_url(value, request)
+                item[key] = _to_outputs_url(local_path, request)
+                if base_dir is not None:
+                    preview_path = self._ensure_preview_asset(base_dir=base_dir, original_path=local_path)
+                    if preview_path:
+                        item[f"{key}_preview_path"] = _to_outputs_url(preview_path, request)
 
         return pagecontent
+
+    def _try_resolve_output_file(self, value: str) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        try:
+            return str(
+                resolve_outputs_path(
+                    raw,
+                    must_exist=False,
+                    allow_files=True,
+                    allow_dirs=False,
+                )
+            )
+        except HTTPException:
+            return ""
+
+    def _ensure_preview_asset(
+        self,
+        *,
+        base_dir: Path,
+        original_path: str,
+    ) -> str:
+        source_path = Path(str(original_path or "").strip())
+        if not source_path.exists() or not source_path.is_file():
+            return ""
+        if source_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+            return str(source_path)
+
+        try:
+            source_stat = source_path.stat()
+        except OSError:
+            return str(source_path)
+
+        try:
+            with Image.open(source_path) as original_img:
+                original_img = ImageOps.exif_transpose(original_img)
+                if max(original_img.size) <= _PREVIEW_MAX_SIDE and source_stat.st_size <= _PREVIEW_SMALL_FILE_BYTES:
+                    return str(source_path)
+
+                preview_root = base_dir / "image_previews"
+                preview_root.mkdir(parents=True, exist_ok=True)
+                digest = hashlib.sha1(
+                    f"{source_path}|{source_stat.st_size}|{source_stat.st_mtime_ns}".encode("utf-8")
+                ).hexdigest()[:16]
+                has_alpha = self._image_has_alpha(original_img)
+                preview_ext = ".png" if has_alpha else ".jpg"
+                preview_path = (preview_root / f"{source_path.stem}_{digest}{preview_ext}").resolve()
+                if preview_path.exists():
+                    return str(preview_path)
+
+                preview_img = original_img.copy()
+                preview_img.thumbnail((_PREVIEW_MAX_SIDE, _PREVIEW_MAX_SIDE), _PIL_LANCZOS)
+                if has_alpha:
+                    preview_img = preview_img.convert("RGBA")
+                    preview_img.save(preview_path, format="PNG", optimize=True)
+                else:
+                    preview_img = preview_img.convert("RGB")
+                    preview_img.save(
+                        preview_path,
+                        format="JPEG",
+                        quality=_PREVIEW_JPEG_QUALITY,
+                        optimize=True,
+                        progressive=True,
+                    )
+                return str(preview_path)
+        except (UnidentifiedImageError, OSError, ValueError) as exc:
+            log.warning("[Paper2PPTService] Failed to build preview for %s: %s", source_path, exc)
+            return str(source_path)
+
+    def _image_has_alpha(self, image: Image.Image) -> bool:
+        bands = image.getbands()
+        if "A" in bands:
+            return True
+        if image.mode == "P":
+            return "transparency" in image.info
+        return False
 
     async def _save_reference_image(self, input_dir: Path, reference_img: UploadFile | None) -> Optional[Path]:
         if reference_img is None:
