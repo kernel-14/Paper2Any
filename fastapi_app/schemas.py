@@ -121,6 +121,9 @@ class Paper2FigureRequest(BaseModel):
     api_key: str = ""
     # 如果使用第三方外部 API（如 OpenAI），在此填写外部 API Key；为空则使用内部服务
 
+    image_api_url: str = ""
+    image_api_key: str = ""
+
     model: str = settings.PAPER2FIGURE_TEXT_MODEL
     # 用于执行理解、抽象、描述生成的文本模型名称
 
@@ -254,6 +257,7 @@ class FrontendPPTGenerationRequest(BaseModel):
     page_id: Optional[int] = None
     edit_prompt: Optional[str] = None
     current_slide: Optional[str] = None
+    skip_slides: Optional[str] = None
 
 
 class FrontendPPTExportRequest(BaseModel):
@@ -508,8 +512,11 @@ class PPTGenerationRequest(BaseModel):
     pagecontent: Optional[str] = None
     page_id: Optional[int] = None
     edit_prompt: Optional[str] = None
+    regenerate_from_outline: str = "false"
     # 图像生成分辨率（1K/2K/4K 等）
     image_resolution: Optional[str] = None
+    # 增量生成：跳过的页码列表（JSON 格式，0-based），复用已有图片
+    skip_pages: Optional[str] = None
 
 
 class FullPipelineRequest(BaseModel):
@@ -545,6 +552,8 @@ class Paper2PPTRequest(BaseModel):
     # ---------------------- 图类型 & 难度设置 ----------------------
     chat_api_key: str = "fill the key"
     api_key: str = ""
+    image_api_url: str = ""
+    image_api_key: str = ""
     # 用于对话的模型
     model: str = settings.PAPER2PPT_DEFAULT_MODEL
 

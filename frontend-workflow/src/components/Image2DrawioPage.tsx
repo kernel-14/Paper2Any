@@ -13,7 +13,7 @@ import {
   Image as ImageIcon,
   Sparkles,
 } from 'lucide-react';
-import { API_KEY, API_URL_OPTIONS, DEFAULT_LLM_API_URL, getPurchaseUrl } from '../config/api';
+import { API_URL_OPTIONS, DEFAULT_LLM_API_URL, getPurchaseUrl } from '../config/api';
 import QRCodeTooltip from './QRCodeTooltip';
 import CasesSection from './CasesSection';
 import ManagedApiNotice from './ManagedApiNotice';
@@ -26,6 +26,7 @@ import {
 import { useAuthStore } from '../stores/authStore';
 import { getApiSettings, saveApiSettings } from '../services/apiSettingsService';
 import { checkQuota, recordUsage } from '../services/quotaService';
+import { backendFetch } from '../services/backendClient';
 import { useRuntimeBilling } from '../hooks/useRuntimeBilling';
 
 const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15MB
@@ -209,11 +210,8 @@ const Image2DrawioPage = () => {
       formData.append('email', user?.id || user?.email || '');
 
       setStatusMessage(t('status.processing'));
-      const res = await fetch(`${API_BASE}/api/v1/image2drawio/generate`, {
+      const res = await backendFetch(`${API_BASE}/api/v1/image2drawio/generate`, {
         method: 'POST',
-        headers: {
-          'X-API-Key': API_KEY,
-        },
         body: formData,
       });
 

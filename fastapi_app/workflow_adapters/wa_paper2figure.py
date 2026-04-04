@@ -26,6 +26,11 @@ from dataflow_agent.utils import get_project_root
 from dataflow_agent.workflow import run_workflow
 
 from fastapi_app.schemas import Paper2FigureRequest, Paper2FigureResponse
+from fastapi_app.utils import get_outputs_root
+from fastapi_app.workflow_adapters.heavy_workflow_subprocess import (
+    run_heavy_workflow_in_subprocess,
+    should_use_heavy_workflow_subprocess,
+)
 
 log = get_logger(__name__)
 
@@ -119,10 +124,20 @@ def _build_result_root(result_path: Path | None, project_root: Path, email: str,
     未传入时按 outputs/{email}/{task_name}/{ts} 自动生成。
     """
     if result_path:
-        return Path(result_path).resolve()
+        resolved = Path(result_path).expanduser()
+        if not resolved.is_absolute():
+            resolved = (project_root / resolved).resolve()
+        else:
+            resolved = resolved.resolve()
+        allowed_root = (project_root / "outputs").resolve()
+        try:
+            resolved.relative_to(allowed_root)
+        except ValueError as exc:
+            raise ValueError(f"Invalid output path outside outputs/: {resolved}") from exc
+        return resolved
 
     user_dir = email or ""
-    return (project_root / "outputs" / user_dir / task_name / ts).resolve()
+    return (get_outputs_root() / user_dir / task_name / ts).resolve()
 
 
 def _get_state_attr(state: Any, key: str, default: str = "") -> str:
@@ -171,6 +186,30 @@ def _has_valid_paper2figure_output(
 # ---------------------------------------------------------------------------
 
 async def run_paper2figure_wf_api(req: Paper2FigureRequest, result_path: Path | None = None) -> Paper2FigureResponse:
+    wf_name, _ = _resolve_workflow(req.graph_type, req.input_type, req.edit_prompt)
+    risky_workflows = {"pdf2ppt_qwenvl", "paper2fig_image_only"}
+    if wf_name in risky_workflows and should_use_heavy_workflow_subprocess(default=True):
+        log.info("[paper2figure] routing workflow=%s through subprocess", wf_name)
+        return await _run_paper2figure_wf_via_subprocess(req, result_path=result_path)
+    return await run_paper2figure_wf_api_local(req, result_path=result_path)
+
+
+async def _run_paper2figure_wf_via_subprocess(
+    req: Paper2FigureRequest,
+    result_path: Path | None = None,
+) -> Paper2FigureResponse:
+    out_data = await run_heavy_workflow_in_subprocess(
+        mode="paper2figure",
+        payload={
+            "request": req.model_dump(mode="json"),
+            "result_path": str(result_path) if result_path else "",
+        },
+        result_path=result_path,
+    )
+    return Paper2FigureResponse.model_validate(out_data.get("response") or {})
+
+
+async def run_paper2figure_wf_api_local(req: Paper2FigureRequest, result_path: Path | None = None) -> Paper2FigureResponse:
     """
     paper2figure 工作流主入口。
 

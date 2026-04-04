@@ -33,6 +33,7 @@ interface SettingsCardProps {
   resolution: '2K' | '4K';
   setResolution: (resolution: '2K' | '4K') => void;
   isLoading: boolean;
+  isSubmitLocked: boolean;
   handleSubmit: () => void;
   currentStage: number;
   stageProgress: number;
@@ -76,6 +77,7 @@ const SettingsCard: React.FC<SettingsCardProps> = ({
   resolution,
   setResolution,
   isLoading,
+  isSubmitLocked,
   handleSubmit,
   currentStage,
   stageProgress,
@@ -153,11 +155,7 @@ const SettingsCard: React.FC<SettingsCardProps> = ({
                   <select
                     value={llmApiUrl}
                     onChange={e => {
-                      const val = e.target.value;
-                      setLlmApiUrl(val);
-                      if (val === 'http://123.129.219.111:3000/v1') {
-                        setModel('gemini-3-pro-image-preview');
-                      }
+                      setLlmApiUrl(e.target.value);
                     }}
                     className="flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-gray-200 outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                   >
@@ -478,11 +476,11 @@ const SettingsCard: React.FC<SettingsCardProps> = ({
         <button
           type="button"
           onClick={handleSubmit}
-          disabled={isLoading}
+          disabled={isLoading || isValidating || isSubmitLocked}
           className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-primary-500 hover:bg-primary-600 disabled:bg-primary-500/60 disabled:cursor-not-allowed text-white text-sm font-medium py-2.5 transition-colors glow"
         >
-          {isLoading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-          <span>{isLoading ? t('submit.buttonLoading') : t('submit.buttonIdle')}</span>
+          {(isLoading || isValidating || isSubmitLocked) ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+          <span>{(isLoading || isValidating || isSubmitLocked) ? t('submit.buttonLoading') : t('submit.buttonIdle')}</span>
         </button>
 
         <div className="flex items-start gap-2 text-xs text-gray-400 bg-white/5 border border-white/10 rounded-lg px-3 py-2">

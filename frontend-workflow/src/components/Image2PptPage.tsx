@@ -5,12 +5,13 @@ import {
   AlertCircle, Github, Star, X, FileImage, ArrowRight, Key, Globe, Sparkles, Image as ImageIcon, MessageSquare, Copy, ToggleLeft, ToggleRight
 } from 'lucide-react';
 import { uploadAndSaveFile } from '../services/fileService';
-import { API_KEY, API_URL_OPTIONS, DEFAULT_LLM_API_URL, getPurchaseUrl } from '../config/api';
+import { API_URL_OPTIONS, DEFAULT_LLM_API_URL, getPurchaseUrl } from '../config/api';
 import { DEFAULT_IMAGE2PPT_GEN_FIG_MODEL, IMAGE2PPT_GEN_FIG_MODELS, withModelOptions } from '../config/models';
 import { checkQuota, recordUsage } from '../services/quotaService';
 import { verifyLlmConnection } from '../services/llmService';
 import { useAuthStore } from '../stores/authStore';
 import { getApiSettings, saveApiSettings } from '../services/apiSettingsService';
+import { backendFetch } from '../services/backendClient';
 import QRCodeTooltip from './QRCodeTooltip';
 import ManagedApiNotice from './ManagedApiNotice';
 import { useRuntimeBilling } from '../hooks/useRuntimeBilling';
@@ -273,9 +274,8 @@ const Image2PptPage = () => {
         formData.append('use_ai_edit', 'false');
       }
       
-      const res = await fetch('/api/v1/image2ppt/generate', {
+      const res = await backendFetch('/api/v1/image2ppt/generate', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
       

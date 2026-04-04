@@ -20,6 +20,8 @@ class MainRequest:
     chat_api_url: str = os.getenv("DF_API_URL", "test")
     api_key: str = os.getenv("DF_API_KEY", "test")
     chat_api_key: str = os.getenv("DF_API_KEY", "test") #没区别，但是不想改之前代码了；
+    image_api_url: str = os.getenv("DF_IMAGE_API_URL", "")
+    image_api_key: str = os.getenv("DF_IMAGE_API_KEY", "")
 
     # ③ 选用的 LLM 名称
     model: str = "gpt-4o"
@@ -296,7 +298,7 @@ class Paper2FigureRequest(MainRequest):
     fig_desc_model: str = "gpt-5.1"
     
     # 新增：用于 wf_paper2technical.py 的技术路线生成模型
-    technical_model: str = "claude-haiku-4-5-20251001"
+    technical_model: str = "gpt-5.4"
     # 技术路线图模板/配色（可选）
     tech_route_template: str = ""
     tech_route_palette: str = ""

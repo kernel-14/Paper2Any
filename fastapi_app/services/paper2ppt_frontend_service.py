@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import html
 import json
 import re
 from pathlib import Path
@@ -10,6 +12,7 @@ from uuid import uuid4
 
 import httpx
 from fastapi import HTTPException, Request, UploadFile
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from dataflow_agent.agentroles import create_react_agent
 from dataflow_agent.logger import get_logger
@@ -24,14 +27,18 @@ from fastapi_app.schemas import (
     FrontendPPTGenerationRequest,
     FrontendPPTReviewRequest,
 )
-from fastapi_app.services.managed_api_service import resolve_llm_credentials
-from fastapi_app.utils import _from_outputs_url, _to_outputs_url
+from fastapi_app.services.managed_api_service import (
+    resolve_image_generation_credentials,
+    resolve_llm_credentials,
+)
+from fastapi_app.utils import _from_outputs_url, _to_outputs_url, resolve_outputs_path
 
 log = get_logger(__name__)
 
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 _FIELD_PLACEHOLDER_RE = re.compile(r"\{\{(?:field|list):([a-zA-Z0-9_]+)\}\}")
 _IMAGE_PLACEHOLDER_RE = re.compile(r"\{\{image:([a-zA-Z0-9_]+)\}\}")
+_ATTRIBUTE_RE = re.compile(r'([^\s"\'<>/=]+)\s*=\s*(["\'])(.*?)\2', re.DOTALL)
 _FORBIDDEN_HTML_RE = re.compile(
     r"<\s*(script|iframe|img|video|audio|canvas|svg)\b|on[a-z]+\s*=",
     re.IGNORECASE,
@@ -47,6 +54,11 @@ _REFERENCE_SLIDE_LIMIT = 3
 _DEFAULT_VISUAL_KEY = "main_visual"
 _DEFAULT_VISUAL_KEYS = ("main_visual", "secondary_visual")
 _MAX_INLINE_VISUAL_ASSETS = 2
+_PREVIEW_MAX_SIDE = 1280
+_PREVIEW_SMALL_FILE_BYTES = 900 * 1024
+_PREVIEW_JPEG_QUALITY = 82
+_PIL_RESAMPLING = getattr(Image, "Resampling", Image)
+_PIL_LANCZOS = _PIL_RESAMPLING.LANCZOS
 
 
 class Paper2PPTFrontendService:
@@ -73,6 +85,11 @@ class Paper2PPTFrontendService:
 
         credential_scope = self._paper2ppt_service._resolve_credential_scope(req.credential_scope)
         resolved_chat_api_url, resolved_api_key = resolve_llm_credentials(
+            req.chat_api_url,
+            req.api_key,
+            scope=credential_scope,
+        )
+        resolved_image_api_url, resolved_image_api_key = resolve_image_generation_credentials(
             req.chat_api_url,
             req.api_key,
             scope=credential_scope,
@@ -105,13 +122,15 @@ class Paper2PPTFrontendService:
                 include_images=req.include_images,
                 image_style=req.image_style,
                 image_model=req.image_model,
+                image_api_url=resolved_image_api_url,
+                image_api_key=resolved_image_api_key,
                 edit_prompt=req.edit_prompt,
                 current_slide=current_slide,
                 theme=deck_theme,
             )
             self._write_slide_spec(slides_dir, generated_slide)
             self._sync_deck_manifest(slides_dir)
-            response_slide = self._externalize_slide_assets(generated_slide, request)
+            response_slide = self._externalize_slide_assets(generated_slide, request, base_dir=base_dir)
             return {
                 "success": True,
                 "slides": [response_slide],
@@ -119,6 +138,37 @@ class Paper2PPTFrontendService:
                 "theme": deck_theme,
                 "parallel_generation": True,
             }
+
+        skip_set: set[int] = set()
+        if req.skip_slides:
+            try:
+                parsed = json.loads(req.skip_slides)
+                if isinstance(parsed, list):
+                    skip_set = {
+                        int(item)
+                        for item in parsed
+                        if isinstance(item, (int, str)) and str(item).strip().isdigit()
+                    }
+            except (json.JSONDecodeError, TypeError, ValueError):
+                skip_set = set()
+
+        reused_slides: list[dict] = []
+        if skip_set:
+            log.info("[frontend] Incremental mode: skip_slides=%s", sorted(skip_set))
+            valid_skip_set: set[int] = set()
+            for idx in sorted(skip_set):
+                spec_path = slides_dir / f"page_{idx:03d}.json"
+                if not spec_path.exists():
+                    log.warning("[frontend] Spec not found for slide %s, will regenerate", idx)
+                    continue
+                try:
+                    content = await asyncio.to_thread(spec_path.read_text, encoding="utf-8")
+                    reused_slides.append(json.loads(content))
+                    valid_skip_set.add(idx)
+                    log.info("[frontend] Reusing existing spec for slide %s", idx)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("[frontend] Failed to load spec for slide %s: %s", idx, exc)
+            skip_set = valid_skip_set
 
         tasks = [
             self._generate_single_slide(
@@ -134,19 +184,25 @@ class Paper2PPTFrontendService:
                 include_images=req.include_images,
                 image_style=req.image_style,
                 image_model=req.image_model,
+                image_api_url=resolved_image_api_url,
+                image_api_key=resolved_image_api_key,
                 edit_prompt=None,
                 current_slide=None,
                 theme=deck_theme,
             )
             for index in range(len(pagecontent))
+            if index not in skip_set
         ]
-        slides = await asyncio.gather(*tasks)
-        ordered_slides = sorted(slides, key=lambda item: int(item.get("page_num", 0)))
+        generated_slides = await asyncio.gather(*tasks)
+        ordered_slides = sorted(
+            list(generated_slides) + reused_slides,
+            key=lambda item: int(item.get("page_num", 0)),
+        )
 
         for slide in ordered_slides:
             self._write_slide_spec(slides_dir, slide)
         self._sync_deck_manifest(slides_dir)
-        response_slides = [self._externalize_slide_assets(slide, request) for slide in ordered_slides]
+        response_slides = [self._externalize_slide_assets(slide, request, base_dir=base_dir) for slide in ordered_slides]
 
         return {
             "success": True,
@@ -331,17 +387,20 @@ class Paper2PPTFrontendService:
         target_path = (target_dir / f"{key}_{uuid4().hex}{suffix}").resolve()
         target_path.write_bytes(payload)
 
-        asset = {
-            "key": key,
-            "label": key.replace("_", " ").title(),
-            "src": str(target_path),
-            "alt": Path(upload.filename or target_path.name).stem,
-            "source_type": "upload",
-            "storage_path": str(target_path),
-        }
+        asset = self._finalize_visual_asset(
+            base_dir=base_dir,
+            asset={
+                "key": key,
+                "label": key.replace("_", " ").title(),
+                "src": str(target_path),
+                "alt": Path(upload.filename or target_path.name).stem,
+                "source_type": "upload",
+                "storage_path": str(target_path),
+            },
+        )
         return {
             "success": True,
-            "asset": self._externalize_asset(asset, request),
+            "asset": self._externalize_asset(asset, request, base_dir=base_dir),
             "result_path": str(base_dir),
         }
 
@@ -360,6 +419,8 @@ class Paper2PPTFrontendService:
         include_images: bool,
         image_style: str,
         image_model: Optional[str],
+        image_api_url: str,
+        image_api_key: str,
         edit_prompt: Optional[str],
         current_slide: Optional[Dict[str, Any]],
         theme: Dict[str, Any],
@@ -372,6 +433,8 @@ class Paper2PPTFrontendService:
             include_images=include_images,
             image_style=image_style,
             image_model=image_model,
+            image_api_url=image_api_url,
+            image_api_key=image_api_key,
             chat_api_url=chat_api_url,
             api_key=api_key,
             model=model,
@@ -597,6 +660,8 @@ class Paper2PPTFrontendService:
         include_images: bool,
         image_style: str,
         image_model: Optional[str],
+        image_api_url: str,
+        image_api_key: str,
         chat_api_url: str,
         api_key: str,
         model: str,
@@ -642,8 +707,8 @@ class Paper2PPTFrontendService:
             prompt=image_prompt,
             image_style=image_style,
             image_model=image_model,
-            chat_api_url=chat_api_url,
-            api_key=api_key,
+            image_api_url=image_api_url,
+            image_api_key=image_api_key,
             outline_item=outline_item,
         )
         if generated_asset is not None:
@@ -695,16 +760,19 @@ class Paper2PPTFrontendService:
                 continue
 
             resolved_assets.append(
-                {
-                    "key": self._build_visual_asset_key(asset_index),
-                    "label": self._build_visual_asset_label(normalized_ref, asset_index),
-                    "src": resolved_asset_path,
-                    "alt": str(outline_item.get("title") or f"Slide {slide_index + 1} visual").strip(),
-                    "source_type": "paper_asset",
-                    "storage_path": resolved_asset_path,
-                    "prompt": "",
-                    "style": image_style,
-                }
+                self._finalize_visual_asset(
+                    base_dir=base_dir,
+                    asset={
+                        "key": self._build_visual_asset_key(asset_index),
+                        "label": self._build_visual_asset_label(normalized_ref, asset_index),
+                        "src": resolved_asset_path,
+                        "alt": str(outline_item.get("title") or f"Slide {slide_index + 1} visual").strip(),
+                        "source_type": "paper_asset",
+                        "storage_path": resolved_asset_path,
+                        "prompt": "",
+                        "style": image_style,
+                    },
+                )
             )
         return resolved_assets
 
@@ -716,18 +784,18 @@ class Paper2PPTFrontendService:
         prompt: str,
         image_style: str,
         image_model: Optional[str],
-        chat_api_url: str,
-        api_key: str,
+        image_api_url: str,
+        image_api_key: str,
         outline_item: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
-        if not chat_api_url or not api_key:
+        if not image_api_url or not image_api_key:
             return None
 
         target_dir = base_dir / "frontend_assets" / "generated"
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = (target_dir / f"page_{slide_index:03d}_{_DEFAULT_VISUAL_KEY}.png").resolve()
         model_name = image_model or settings.PAPER2PPT_IMAGE_GEN_MODEL or settings.PAPER2PPT_DEFAULT_IMAGE_MODEL
-        api_base = re.sub(r"/chat/completions/?$", "", chat_api_url.rstrip("/"), flags=re.IGNORECASE)
+        api_base = re.sub(r"/chat/completions/?$", "", image_api_url.rstrip("/"), flags=re.IGNORECASE)
 
         try:
             async with _IMAGE_GEN_SEMAPHORE:
@@ -735,7 +803,7 @@ class Paper2PPTFrontendService:
                     prompt=prompt,
                     save_path=str(target_path),
                     api_url=api_base,
-                    api_key=api_key,
+                    api_key=image_api_key,
                     model=model_name,
                     use_edit=False,
                     aspect_ratio="16:9",
@@ -750,16 +818,19 @@ class Paper2PPTFrontendService:
             )
             return None
 
-        return {
-            "key": _DEFAULT_VISUAL_KEY,
-            "label": "Main Visual",
-            "src": str(target_path),
-            "alt": str(outline_item.get("title") or f"Slide {slide_index + 1} visual").strip(),
-            "source_type": "generated",
-            "storage_path": str(target_path),
-            "prompt": prompt,
-            "style": image_style,
-        }
+        return self._finalize_visual_asset(
+            base_dir=base_dir,
+            asset={
+                "key": _DEFAULT_VISUAL_KEY,
+                "label": "Main Visual",
+                "src": str(target_path),
+                "alt": str(outline_item.get("title") or f"Slide {slide_index + 1} visual").strip(),
+                "source_type": "generated",
+                "storage_path": str(target_path),
+                "prompt": prompt,
+                "style": image_style,
+            },
+        )
 
     def _build_visual_asset_prompt(
         self,
@@ -978,9 +1049,12 @@ class Paper2PPTFrontendService:
         if not raw:
             return ""
 
-        candidate = Path(raw)
+        candidate = Path(raw).expanduser()
         if candidate.is_absolute():
-            return str(candidate.resolve())
+            try:
+                return str(resolve_outputs_path(candidate, must_exist=True, allow_files=True))
+            except HTTPException:
+                return ""
 
         search_paths = [
             base_dir / candidate,
@@ -1031,16 +1105,27 @@ class Paper2PPTFrontendService:
             if source_type not in {"generated", "paper_asset", "upload"}:
                 source_type = "generated"
             normalized.append(
-                {
-                    "key": key,
-                    "label": str(raw_asset.get("label") or key.replace("_", " ").title()).strip(),
-                    "src": resolved_src or _from_outputs_url(src),
-                    "alt": str(raw_asset.get("alt") or raw_asset.get("label") or key).strip(),
-                    "source_type": source_type,
-                    "storage_path": resolved_src or "",
-                    "prompt": str(raw_asset.get("prompt") or "").strip(),
-                    "style": str(raw_asset.get("style") or "").strip(),
-                }
+                self._finalize_visual_asset(
+                    base_dir=base_dir,
+                    asset={
+                        "key": key,
+                        "label": str(raw_asset.get("label") or key.replace("_", " ").title()).strip(),
+                        "src": resolved_src or "",
+                        "alt": str(raw_asset.get("alt") or raw_asset.get("label") or key).strip(),
+                        "source_type": source_type,
+                        "storage_path": resolved_src or "",
+                        "preview_storage_path": str(
+                            raw_asset.get("preview_storage_path")
+                            or raw_asset.get("previewStoragePath")
+                            or raw_asset.get("preview_src")
+                            or raw_asset.get("previewSrc")
+                            or ""
+                        ).strip(),
+                        "original_src": str(raw_asset.get("original_src") or raw_asset.get("originalSrc") or "").strip(),
+                        "prompt": str(raw_asset.get("prompt") or "").strip(),
+                        "style": str(raw_asset.get("style") or "").strip(),
+                    },
+                )
             )
             seen_keys.add(key)
         return normalized
@@ -1165,6 +1250,7 @@ Hard requirements:
 12. If visual_assets are empty, build a text-first slide using editable text blocks and CSS decoration only.
 13. The HTML must contain a single .slide-root root element.
 14. If reference deck slides are provided, preserve their shared component grammar, spacing rhythm, and card treatment.
+15. Never put {{field:...}}, {{list:...}}, or {{image:...}} placeholders inside HTML attributes like aria-label, title, alt, data-*, href, or style. Placeholders may only appear in element content.
 """.strip()
 
         outline_payload = {
@@ -1366,6 +1452,17 @@ If there are any meaningful problems, set passed=false and provide a concrete re
         )
         if not editable_fields:
             return fallback_slide
+
+        normalized_html, attribute_warnings = self._sanitize_attribute_placeholders(
+            normalized_html,
+            editable_fields,
+        )
+        if attribute_warnings:
+            log.warning(
+                "[Paper2PPTFrontendService] Sanitized attribute placeholders for page %s: %s",
+                slide_index + 1,
+                ", ".join(attribute_warnings),
+            )
 
         field_keys = {field["key"] for field in editable_fields}
         placeholders = set(_FIELD_PLACEHOLDER_RE.findall(normalized_html))
@@ -1852,36 +1949,176 @@ If there are any meaningful problems, set passed=false and provide a concrete re
         self,
         asset: Dict[str, Any],
         request: Request | None,
+        *,
+        base_dir: Path,
     ) -> Dict[str, Any]:
-        normalized = dict(asset)
+        normalized = self._finalize_visual_asset(base_dir=base_dir, asset=asset)
         storage_path = str(
             normalized.get("storage_path")
             or normalized.get("storagePath")
+            or normalized.get("original_src")
+            or normalized.get("originalSrc")
             or normalized.get("src")
             or ""
         ).strip()
+        preview_storage_path = str(
+            normalized.get("preview_storage_path")
+            or normalized.get("previewStoragePath")
+            or normalized.get("preview_src")
+            or normalized.get("previewSrc")
+            or ""
+        ).strip()
         if storage_path:
-            normalized["storage_path"] = storage_path
-            normalized["src"] = _to_outputs_url(storage_path, request) if request is not None else storage_path
+            try:
+                resolved_storage = str(resolve_outputs_path(storage_path, must_exist=False, allow_files=True))
+            except HTTPException:
+                resolved_storage = ""
+            try:
+                resolved_preview = (
+                    str(resolve_outputs_path(preview_storage_path, must_exist=False, allow_files=True))
+                    if preview_storage_path
+                    else ""
+                )
+            except HTTPException:
+                resolved_preview = ""
+            if not resolved_preview and resolved_storage:
+                resolved_preview = self._ensure_preview_asset(base_dir=base_dir, original_path=resolved_storage)
+            normalized["storage_path"] = resolved_storage
+            normalized["preview_storage_path"] = resolved_preview
+            normalized["original_src"] = _to_outputs_url(resolved_storage, request) if (request is not None and resolved_storage) else resolved_storage
+            normalized["preview_src"] = _to_outputs_url(resolved_preview, request) if (request is not None and resolved_preview) else (resolved_preview or normalized["original_src"])
+            normalized["src"] = normalized["preview_src"] or normalized["original_src"]
         else:
             normalized["src"] = str(normalized.get("src") or "").strip()
             normalized["storage_path"] = ""
+            normalized["preview_storage_path"] = ""
+            normalized["preview_src"] = normalized["src"]
+            normalized["original_src"] = normalized["src"]
         return normalized
 
     def _externalize_slide_assets(
         self,
         slide: Dict[str, Any],
         request: Request | None,
+        *,
+        base_dir: Path,
     ) -> Dict[str, Any]:
         normalized = dict(slide)
         raw_assets = normalized.get("visual_assets") or []
         if isinstance(raw_assets, list):
             normalized["visual_assets"] = [
-                self._externalize_asset(asset, request)
+                self._externalize_asset(asset, request, base_dir=base_dir)
                 for asset in raw_assets
                 if isinstance(asset, dict)
             ]
         return normalized
+
+    def _finalize_visual_asset(
+        self,
+        *,
+        base_dir: Path,
+        asset: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        normalized = dict(asset)
+        raw_storage_path = str(
+            normalized.get("storage_path")
+            or normalized.get("storagePath")
+            or normalized.get("original_src")
+            or normalized.get("originalSrc")
+            or normalized.get("src")
+            or ""
+        ).strip()
+        resolved_storage = self._resolve_asset_path(base_dir=base_dir, asset_ref=raw_storage_path) if raw_storage_path else ""
+
+        raw_preview_path = str(
+            normalized.get("preview_storage_path")
+            or normalized.get("previewStoragePath")
+            or normalized.get("preview_src")
+            or normalized.get("previewSrc")
+            or ""
+        ).strip()
+        resolved_preview = self._resolve_asset_path(base_dir=base_dir, asset_ref=raw_preview_path) if raw_preview_path else ""
+
+        if resolved_storage:
+            if not resolved_preview or not Path(resolved_preview).exists():
+                resolved_preview = self._ensure_preview_asset(base_dir=base_dir, original_path=resolved_storage)
+            normalized["storage_path"] = resolved_storage
+            normalized["preview_storage_path"] = resolved_preview or ""
+            normalized["original_src"] = resolved_storage
+            normalized["preview_src"] = resolved_preview or resolved_storage
+            normalized["src"] = resolved_preview or resolved_storage
+        else:
+            normalized["storage_path"] = ""
+            normalized["preview_storage_path"] = ""
+            normalized["original_src"] = str(normalized.get("original_src") or normalized.get("originalSrc") or normalized.get("src") or "").strip()
+            normalized["preview_src"] = str(normalized.get("preview_src") or normalized.get("previewSrc") or normalized.get("src") or "").strip()
+            normalized["src"] = normalized["preview_src"] or normalized["original_src"]
+        return normalized
+
+    def _ensure_preview_asset(
+        self,
+        *,
+        base_dir: Path,
+        original_path: str,
+    ) -> str:
+        source_path = Path(str(original_path or "").strip())
+        if not source_path.exists() or not source_path.is_file():
+            return ""
+        if source_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+            return str(source_path)
+
+        try:
+            source_stat = source_path.stat()
+        except OSError:
+            return str(source_path)
+
+        try:
+            with Image.open(source_path) as original_img:
+                original_img = ImageOps.exif_transpose(original_img)
+                if max(original_img.size) <= _PREVIEW_MAX_SIDE and source_stat.st_size <= _PREVIEW_SMALL_FILE_BYTES:
+                    return str(source_path)
+
+                preview_root = base_dir / "frontend_assets" / "previews"
+                preview_root.mkdir(parents=True, exist_ok=True)
+                digest = hashlib.sha1(
+                    f"{source_path}|{source_stat.st_size}|{source_stat.st_mtime_ns}".encode("utf-8")
+                ).hexdigest()[:16]
+                has_alpha = self._image_has_alpha(original_img)
+                preview_ext = ".png" if has_alpha else ".jpg"
+                preview_path = (preview_root / f"{source_path.stem}_{digest}{preview_ext}").resolve()
+                if preview_path.exists():
+                    return str(preview_path)
+
+                preview_img = original_img.copy()
+                preview_img.thumbnail((_PREVIEW_MAX_SIDE, _PREVIEW_MAX_SIDE), _PIL_LANCZOS)
+                if has_alpha:
+                    preview_img = preview_img.convert("RGBA")
+                    preview_img.save(preview_path, format="PNG", optimize=True)
+                else:
+                    preview_img = preview_img.convert("RGB")
+                    preview_img.save(
+                        preview_path,
+                        format="JPEG",
+                        quality=_PREVIEW_JPEG_QUALITY,
+                        optimize=True,
+                        progressive=True,
+                    )
+                return str(preview_path)
+        except (UnidentifiedImageError, OSError, ValueError) as exc:
+            log.warning(
+                "[Paper2PPTFrontendService] Failed to build preview for %s: %s",
+                source_path,
+                exc,
+            )
+            return str(source_path)
+
+    def _image_has_alpha(self, image: Image.Image) -> bool:
+        bands = image.getbands()
+        if "A" in bands:
+            return True
+        if image.mode == "P":
+            return "transparency" in image.info
+        return False
 
     def _load_reference_slides(
         self,
@@ -2307,6 +2544,49 @@ If there are any meaningful problems, set passed=false and provide a concrete re
         if 'class="slide-root"' not in cleaned and "class='slide-root'" not in cleaned:
             cleaned = f'<div class="slide-root">{cleaned}</div>'
         return cleaned
+
+    def _sanitize_attribute_placeholders(
+        self,
+        html_template: str,
+        editable_fields: Sequence[Dict[str, Any]],
+    ) -> tuple[str, list[str]]:
+        field_map = {
+            str(field.get("key") or "").strip(): field
+            for field in editable_fields
+            if isinstance(field, dict) and str(field.get("key") or "").strip()
+        }
+        warnings: list[str] = []
+
+        def _replace_attr(match: re.Match[str]) -> str:
+            attr_name, quote, attr_value = match.groups()
+            next_value = attr_value
+
+            def _replace_field(token_match: re.Match[str]) -> str:
+                field_key = str(token_match.group(1) or "").strip()
+                field = field_map.get(field_key)
+                if field is None:
+                    return ""
+                if str(field.get("type") or "") == "list":
+                    raw_value = " • ".join(
+                        str(item).strip()
+                        for item in (field.get("items") or [])
+                        if str(item).strip()
+                    )
+                else:
+                    raw_value = str(field.get("value") or "")
+                return html.escape(" ".join(raw_value.split()), quote=True)
+
+            next_value = re.sub(r"\{\{field:([a-zA-Z0-9_]+)\}\}", _replace_field, next_value)
+            next_value = re.sub(r"\{\{list:([a-zA-Z0-9_]+)\}\}", _replace_field, next_value)
+            next_value = re.sub(r"\{\{image:([a-zA-Z0-9_]+)\}\}", "", next_value)
+
+            if next_value != attr_value:
+                warnings.append(attr_name)
+                return f"{attr_name}={quote}{next_value}{quote}"
+            return match.group(0)
+
+        sanitized = _ATTRIBUTE_RE.sub(_replace_attr, html_template)
+        return sanitized, sorted(set(warnings))
 
     def _sanitize_css(self, css_code: str, *, theme: Dict[str, Any]) -> str:
         cleaned = re.sub(r"/\*[\s\S]*?\*/", "", css_code)

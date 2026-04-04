@@ -20,12 +20,21 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from script.cli_env import load_project_env
 from dataflow_agent.logger import get_logger
 from dataflow_agent.state import Paper2FigureState, Paper2FigureRequest
 from dataflow_agent.workflow import run_workflow
 from dataflow_agent.utils import get_project_root
 
+load_project_env()
+
 log = get_logger(__name__)
+
+
+def _state_get(state, key: str, default=None):
+    if isinstance(state, dict):
+        return state.get(key, default)
+    return getattr(state, key, default)
 
 
 def parse_args():
@@ -166,6 +175,7 @@ async def run_image2ppt_workflow(args, input_path: Path, output_dir: Path):
         page_count=args.page_count,
         use_ai_edit=args.use_ai_edit,
         input_type="FIGURE",  # Key difference: set input type to FIGURE
+        input_content=str(input_path),
     )
 
     # Build state
@@ -176,7 +186,7 @@ async def run_image2ppt_workflow(args, input_path: Path, output_dir: Path):
         input_type="FIGURE",  # Set input type to FIGURE
     )
 
-    # Set image file path (use pdf_file attribute for compatibility)
+    # Keep compatibility for code paths that still inspect state.pdf_file.
     state.pdf_file = str(input_path)
 
     # Select workflow based on use_ai_edit flag (reuses PDF2PPT workflows)
@@ -206,11 +216,15 @@ def print_results(final_state: Paper2FigureState, output_dir: Path):
     log.info("%s", "=" * 60)
     log.info("Output Directory: %s", output_dir)
 
-    ppt_path = getattr(final_state, "ppt_path", None)
+    ppt_path = _state_get(final_state, "ppt_path", None)
     if ppt_path and os.path.exists(ppt_path):
         log.info("PPT File: %s", ppt_path)
     else:
-        log.warning("PPT file not found in output")
+        ppt_candidates = sorted(output_dir.rglob("*.pptx")) + sorted(output_dir.rglob("*.ppt"))
+        if ppt_candidates:
+            log.info("PPT File: %s", ppt_candidates[0])
+        else:
+            log.warning("PPT file not found in output")
 
     log.info("%s", "=" * 60)
 

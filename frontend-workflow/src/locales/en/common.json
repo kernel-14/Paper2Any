@@ -4,12 +4,14 @@
   "success": "Success",
   "app": {
     "subtitle": "Agent-driven Research Creation Experience",
+    "purchaseMore": "Redeem Points",
     "githubProject": "GitHub Open Source",
     "exploreMore": "🚀 Explore more AI data processing tools",
     "quotaRemaining": "Remaining: {{remaining}}/{{limit}}",
     "nav": {
       "home": "Overview",
       "paper2figure": "Research Figure Generator",
+      "mindmap": "Mind Map",
       "paper2drawio": "Diagram Generator (DrawIO)",
       "paper2ppt": "Paper2PPT",
       "paper2video": "PPT to Video",
@@ -33,6 +35,7 @@
     "navTooltip": {
       "home": "See all workflows, preview examples, and jump straight into the right tool from a single landing page",
       "paper2figure": "Generate research figures from papers, including model architecture diagrams, technical roadmaps, and experimental data charts in editable PPTX format",
+      "mindmap": "Upload papers, lecture notes, or paste raw text to generate a standalone tree-structured mind map, then keep refining nodes and branches inside the same page",
       "paper2drawio": "Convert images to editable DrawIO diagrams, supporting flowcharts, architecture diagrams, and more",
       "paper2ppt": "Upload paper PDFs or enter topics, AI intelligently analyzes content and generates beautiful academic presentation slides",
       "pdf2ppt": "Quickly convert any PDF document to editable PPTX format while preserving original layout and content structure",
@@ -114,6 +117,11 @@
           "description": "Turn paper paragraphs or text instructions into editable DrawIO flowcharts and system diagrams.",
           "badge": "Text → DrawIO"
         },
+        "mindmap": {
+          "title": "Standalone Mind Map Workspace",
+          "description": "Extract structure from documents or raw text, generate Mermaid mind maps, and keep editing and saving the source inside one dedicated page.",
+          "badge": "Mind Map"
+        },
         "paper2poster": {
           "title": "Paper to Poster",
           "description": "Summarize content, organize layout, and build a conference-poster style visual automatically.",
@@ -167,16 +175,12 @@
     }
   },
   "userMenu": {
-    "anonymous": "Guest",
     "user": "User",
-    "identity": "Identity",
     "loggedIn": "Logged In",
-    "guestMode": "Guest Mode",
-    "limited": "Limited Features",
     "pro": "Pro Features Unlocked",
-    "signIn": "Sign in for full access",
+    "buyPoints": "Buy Redeem Codes",
+    "redeemPoints": "Redeem Points",
     "thanks": "Thanks for your support",
-    "exitGuest": "Exit Guest Mode",
     "signOut": "Sign Out"
   },
   "filesPage": {

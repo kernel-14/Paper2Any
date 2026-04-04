@@ -269,6 +269,9 @@ models/sam3-official/sam3/*
 outputs/*
 tmps/*
 data/*
+!data/redeem_codes/
+data/redeem_codes/*.txt
+!data/redeem_codes/README.md
 sam_b.pt
 # fastapi
 fastapi_app/outputs/

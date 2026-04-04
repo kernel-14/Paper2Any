@@ -1,13 +1,19 @@
 import React, { useState, useEffect, ChangeEvent, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { uploadAndSaveFile } from '../../services/fileService';
-import { API_KEY, DEFAULT_LLM_API_URL } from '../../config/api';
+import { DEFAULT_LLM_API_URL } from '../../config/api';
 import { DEFAULT_PAPER2PPT_GEN_FIG_MODEL, DEFAULT_PAPER2PPT_MODEL } from '../../config/models';
 import { checkQuota, recordUsage } from '../../services/quotaService';
 import { verifyLlmConnection } from '../../services/llmService';
 import { useAuthStore } from '../../stores/authStore';
 import { getApiSettings, saveApiSettings } from '../../services/apiSettingsService';
+import { backendFetch } from '../../services/backendClient';
 import { useRuntimeBilling } from '../../hooks/useRuntimeBilling';
+import {
+  buildInsufficientPointsMessage,
+  buildQuotaExhaustedMessage,
+  resolvePointsPurchaseUrl,
+} from '../../utils/pointsMessaging';
 
 import {
   FrontendDeckTheme,
@@ -47,8 +53,11 @@ export interface Paper2PptPageProps {
 
 const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
   const { user, refreshQuota } = useAuthStore();
-  const { userApiConfigRequired } = useRuntimeBilling();
+  const { userApiConfigRequired, runtimeConfig } = useRuntimeBilling();
   const modeLocked = Boolean(initialMode);
+  const purchaseUrl = runtimeConfig.billing_mode === 'free'
+    ? resolvePointsPurchaseUrl(runtimeConfig)
+    : '';
   
   // Step 状态
   const [currentStep, setCurrentStep] = useState<Step>('upload');
@@ -76,6 +85,7 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
   
   // Step 2: Outline 相关状态
   const [outlineData, setOutlineData] = useState<SlideOutline[]>([]);
+  const [confirmedOutlineSnapshot, setConfirmedOutlineSnapshot] = useState<SlideOutline[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState<{
     title: string;
@@ -113,6 +123,12 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
   const [language, setLanguage] = useState<'zh' | 'en'>('en');
   const [resultPath, setResultPath] = useState<string | null>(null);
   const frontendCaptureRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const uploadSubmitGuardRef = useRef(false);
+  const uploadSubmitGuardTimerRef = useRef<number | null>(null);
+  const [isUploadSubmitLocked, setIsUploadSubmitLocked] = useState(false);
+  const outlineSubmitGuardRef = useRef(false);
+  const outlineSubmitGuardTimerRef = useRef<number | null>(null);
+  const [isOutlineSubmitLocked, setIsOutlineSubmitLocked] = useState(false);
 
   // GitHub Stars
   const [stars, setStars] = useState<{dataflow: number | null, agent: number | null, dataflex: number | null}>({
@@ -137,14 +153,11 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
     isAnonymous: user?.is_anonymous || false,
   });
 
-  const buildInsufficientPointsMessage = (required: number, remaining: number, action: string) =>
-    `点数不足：${action}需要 ${required} 点，当前剩余 ${remaining} 点。`;
-
   const ensureQuotaForAction = async (required: number, action: string) => {
     const { userId, isAnonymous } = getQuotaContext();
     const quota = await checkQuota(userId, isAnonymous);
     if (quota.remaining < required) {
-      setError(buildInsufficientPointsMessage(required, quota.remaining, action));
+      setError(buildInsufficientPointsMessage(required, quota.remaining, action, purchaseUrl));
       return false;
     }
     return true;
@@ -160,6 +173,40 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
     return ok;
   };
 
+  const normalizeBackendErrorDetail = (detail: unknown): string | null => {
+    if (typeof detail === 'string' && detail.trim()) {
+      return detail.trim();
+    }
+    if (Array.isArray(detail)) {
+      const messages = detail
+        .map((item) => {
+          if (!item || typeof item !== 'object') {
+            return '';
+          }
+          const entry = item as { loc?: unknown; msg?: unknown; type?: unknown };
+          const loc = Array.isArray(entry.loc) ? entry.loc.slice(1).join('.') : '';
+          const msg = typeof entry.msg === 'string' ? entry.msg.trim() : '';
+          const type = typeof entry.type === 'string' ? entry.type.trim() : '';
+          return [loc, msg || type].filter(Boolean).join(': ');
+        })
+        .filter(Boolean);
+      return messages.length ? messages.join('；') : null;
+    }
+    if (detail && typeof detail === 'object') {
+      const entry = detail as { message?: unknown; detail?: unknown; error?: unknown };
+      if (typeof entry.message === 'string' && entry.message.trim()) {
+        return entry.message.trim();
+      }
+      if (typeof entry.detail === 'string' && entry.detail.trim()) {
+        return entry.detail.trim();
+      }
+      if (typeof entry.error === 'string' && entry.error.trim()) {
+        return entry.error.trim();
+      }
+    }
+    return null;
+  };
+
   const extractErrorMessage = async (res: Response, fallback: string) => {
     if (res.status === 403) {
       return '邀请码不正确或已失效';
@@ -169,8 +216,9 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
     }
     try {
       const errBody = await res.json();
-      if (typeof errBody?.detail === 'string' && errBody.detail.trim()) {
-        return errBody.detail;
+      const detailMessage = normalizeBackendErrorDetail(errBody?.detail);
+      if (detailMessage) {
+        return detailMessage;
       }
       if (typeof errBody?.error === 'string' && errBody.error.trim()) {
         return errBody.error;
@@ -182,6 +230,39 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
       // ignore parse error
     }
     return fallback;
+  };
+
+  useEffect(() => {
+    return () => {
+      if (uploadSubmitGuardTimerRef.current !== null) {
+        window.clearTimeout(uploadSubmitGuardTimerRef.current);
+      }
+      if (outlineSubmitGuardTimerRef.current !== null) {
+        window.clearTimeout(outlineSubmitGuardTimerRef.current);
+      }
+    };
+  }, []);
+
+  const releaseUploadSubmitGuard = (cooldownMs: number = 1200) => {
+    if (uploadSubmitGuardTimerRef.current !== null) {
+      window.clearTimeout(uploadSubmitGuardTimerRef.current);
+    }
+    uploadSubmitGuardTimerRef.current = window.setTimeout(() => {
+      uploadSubmitGuardRef.current = false;
+      setIsUploadSubmitLocked(false);
+      uploadSubmitGuardTimerRef.current = null;
+    }, cooldownMs);
+  };
+
+  const releaseOutlineSubmitGuard = (cooldownMs: number = 1500) => {
+    if (outlineSubmitGuardTimerRef.current !== null) {
+      window.clearTimeout(outlineSubmitGuardTimerRef.current);
+    }
+    outlineSubmitGuardTimerRef.current = window.setTimeout(() => {
+      outlineSubmitGuardRef.current = false;
+      setIsOutlineSubmitLocked(false);
+      outlineSubmitGuardTimerRef.current = null;
+    }, cooldownMs);
   };
 
   const handleCopyShareText = async () => {
@@ -334,21 +415,18 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
   const sleep = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
 
   const parseErrorMessage = async (res: Response, fallback: string) => {
-    if (res.status === 429) {
-      return '请求过于频繁，请稍后再试';
-    }
-    try {
-      const errBody = await res.json();
-      return errBody?.error || errBody?.detail || errBody?.message || fallback;
-    } catch {
-      return fallback;
-    }
+    return extractErrorMessage(res, fallback);
   };
 
-  const submitPaper2PptTask = async (formData: FormData): Promise<Paper2PPTTaskResponse> => {
-    const res = await fetch('/api/v1/paper2ppt/generate-task', {
+  const submitPaper2PptTask = async (
+    formData: FormData,
+    workflowAmount?: number,
+  ): Promise<Paper2PPTTaskResponse> => {
+    const res = await backendFetch('/api/v1/paper2ppt/generate-task', {
       method: 'POST',
-      headers: { 'X-API-Key': API_KEY },
+      headers: workflowAmount && workflowAmount > 0
+        ? { 'X-Workflow-Amount': String(workflowAmount) }
+        : undefined,
       body: formData,
     });
 
@@ -371,9 +449,7 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
 
     for (let attempt = 0; attempt < 720; attempt += 1) {
       try {
-        const res = await fetch(`/api/v1/paper2ppt/tasks/${taskId}`, {
-          headers: { 'X-API-Key': API_KEY },
-        });
+        const res = await backendFetch(`/api/v1/paper2ppt/tasks/${taskId}`);
         if (!res.ok) {
           throw new Error(await parseErrorMessage(res, '任务状态查询失败'));
         }
@@ -416,6 +492,9 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
     });
   };
 
+  const getPreviewPath = (item: any, key: string) =>
+    String(item?.[`${key}_preview_path`] || item?.[`${key}PreviewPath`] || '').trim();
+
   const normalizeFrontendSlides = (slides: any[]): FrontendSlide[] =>
     slides.map((slide: any, index: number) => ({
       slideId: String(slide.slide_id || slide.slideId || index + 1),
@@ -437,6 +516,8 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
             key: String(asset.key || `main_visual_${assetIndex + 1}`),
             label: String(asset.label || asset.key || `Image ${assetIndex + 1}`),
             src: String(asset.src || ''),
+            previewSrc: String(asset.preview_src || asset.previewSrc || asset.src || ''),
+            originalSrc: String(asset.original_src || asset.originalSrc || asset.storage_path || asset.storagePath || asset.src || ''),
             alt: String(asset.alt || asset.label || asset.key || ''),
             sourceType: asset.source_type === 'paper_asset' || asset.sourceType === 'paper_asset'
               ? 'paper_asset'
@@ -444,6 +525,7 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
                 ? 'upload'
                 : 'generated',
             storagePath: asset.storage_path || asset.storagePath || undefined,
+            previewStoragePath: asset.preview_storage_path || asset.previewStoragePath || undefined,
             prompt: asset.prompt || undefined,
             style: asset.style || undefined,
           }))
@@ -499,9 +581,12 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
       key: asset.key,
       label: asset.label,
       src: asset.src,
+      preview_src: asset.previewSrc || asset.src,
+      original_src: asset.originalSrc || asset.storagePath || asset.src,
       alt: asset.alt,
       source_type: asset.sourceType,
       storage_path: asset.storagePath || '',
+      preview_storage_path: asset.previewStoragePath || '',
       prompt: asset.prompt || '',
       style: asset.style || '',
     })),
@@ -518,6 +603,48 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
         asset_ref: slide.asset_ref,
       })),
     );
+
+  const cloneOutlineSnapshot = (slides: SlideOutline[]) =>
+    slides.map((slide) => ({
+      ...slide,
+      key_points: [...slide.key_points],
+    }));
+
+  const getUnchangedPageIndices = (
+    current: SlideOutline[],
+    snapshot: SlideOutline[],
+  ): number[] => {
+    if (snapshot.length === 0) return [];
+    const unchanged: number[] = [];
+    const minLength = Math.min(current.length, snapshot.length);
+    for (let index = 0; index < minLength; index += 1) {
+      const currentSlide = current[index];
+      const snapshotSlide = snapshot[index];
+      if (
+        currentSlide.id === snapshotSlide.id &&
+        currentSlide.title === snapshotSlide.title &&
+        currentSlide.layout_description === snapshotSlide.layout_description &&
+        currentSlide.asset_ref === snapshotSlide.asset_ref &&
+        JSON.stringify(currentSlide.key_points) === JSON.stringify(snapshotSlide.key_points)
+      ) {
+        unchanged.push(index);
+      }
+    }
+    return unchanged;
+  };
+
+  const buildPagecontentForGeneration = () =>
+    outlineData.map((slide, index) => {
+      const result = generateResults[index];
+      const generatedPath = result?.afterImage || '';
+      return {
+        title: slide.title,
+        layout_description: slide.layout_description,
+        key_points: slide.key_points,
+        asset_ref: slide.asset_ref,
+        generated_img_path: generatedPath || undefined,
+      };
+    });
 
   const getEffectiveStylePrompt = (mode: PptGenerationMode = pptMode) =>
     globalPrompt || getStyleDescription(stylePreset, mode);
@@ -564,9 +691,9 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
     formData.append('current_slide', JSON.stringify(serializeFrontendSlide(slideSnapshot)));
     formData.append('pagecontent', buildFrontendPagecontentPayload());
 
-    const res = await fetch('/api/v1/paper2ppt/frontend/generate', {
+    const res = await backendFetch('/api/v1/paper2ppt/frontend/generate', {
       method: 'POST',
-      headers: { 'X-API-Key': API_KEY },
+      headers: { 'X-Workflow-Amount': '1' },
       body: formData,
     });
     if (!res.ok) {
@@ -614,9 +741,9 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
       }),
     );
 
-    const res = await fetch('/api/v1/paper2ppt/frontend/review', {
+    const res = await backendFetch('/api/v1/paper2ppt/frontend/review', {
       method: 'POST',
-      headers: { 'X-API-Key': API_KEY },
+      headers: { 'X-Workflow-Amount': '1' },
       body: formData,
     });
     if (!res.ok) {
@@ -762,8 +889,11 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
     }
 
     const reviewResults: boolean[] = new Array(slides.length).fill(false);
+    let completed = 0;
     await runWithConcurrency(slides, 2, async (slide, index) => {
       reviewResults[index] = await autoReviewAndRepairFrontendSlide(index, slide, resultPathValue);
+      completed += 1;
+      setGenerateTaskMessage(`首轮视觉检查进行中（${completed}/${slides.length}）...`);
     });
 
     const failedCount = reviewResults.filter((item) => !item).length;
@@ -886,71 +1016,74 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
       return;
     }
 
-    // Check quota before proceeding
-    const quota = await checkQuota(user?.id || null, user?.is_anonymous || false);
-    if (quota.remaining <= 0) {
-      setError('当前点数不足，请先获取更多点数后再试。');
+    if (isUploading || isValidating || isUploadSubmitLocked || uploadSubmitGuardRef.current) {
       return;
     }
 
+    uploadSubmitGuardRef.current = true;
+    setIsUploadSubmitLocked(true);
+
+    let progressInterval: number | null = null;
+
     try {
-        // Step 0: Verify LLM Connection first
+      const quota = await checkQuota(user?.id || null, user?.is_anonymous || false);
+      if (quota.remaining <= 0) {
+        setError(buildQuotaExhaustedMessage(purchaseUrl));
+        return;
+      }
+
+      try {
         setIsValidating(true);
         setError(null);
         await verifyLlmConnection(llmApiUrl, apiKey, import.meta.env.VITE_DEFAULT_LLM_MODEL || 'deepseek-v3.2');
-        setIsValidating(false);
-    } catch (err) {
-        setIsValidating(false);
+      } catch (err) {
         const message = err instanceof Error ? err.message : 'API 验证失败';
         setError(message);
-        return; // Stop execution if validation fails
-    }
+        return;
+      }
 
-    setIsUploading(true);
-    setError(null);
-    setGenerateResults([]);
-    setFrontendSlides([]);
-    setFrontendDeckTheme(null);
-    frontendCaptureRefs.current = [];
-    setDownloadUrl(null);
-    setPdfPreviewUrl(null);
-    setResultPath(null);
-    setProgress(0);
-    setProgressStatus('正在初始化...');
-    
-    // 模拟进度
-    const requestStartedAt = Date.now();
-    const progressInterval = setInterval(() => {
-      setProgress(prev => {
-        const elapsedSec = Math.floor((Date.now() - requestStartedAt) / 1000);
-        if (prev >= 90) {
+      setIsUploading(true);
+      setError(null);
+      setGenerateResults([]);
+      setFrontendSlides([]);
+      setFrontendDeckTheme(null);
+      frontendCaptureRefs.current = [];
+      setDownloadUrl(null);
+      setPdfPreviewUrl(null);
+      setResultPath(null);
+      setProgress(0);
+      setProgressStatus('正在初始化...');
+
+      const requestStartedAt = Date.now();
+      progressInterval = window.setInterval(() => {
+        setProgress(prev => {
+          const elapsedSec = Math.floor((Date.now() - requestStartedAt) / 1000);
+          if (prev >= 90) {
+            if (elapsedSec >= 90) {
+              setProgressStatus(`AI 正在生成大纲，已等待 ${Math.floor(elapsedSec / 60)} 分 ${elapsedSec % 60} 秒，请稍候`);
+            } else {
+              setProgressStatus('AI 正在生成大纲，请稍候');
+            }
+            return 90;
+          }
+          const messages = [
+            '正在准备输入内容...',
+            '正在解析论文内容...',
+            '正在提取关键信息...',
+            '正在请求大模型生成大纲...',
+          ];
+          const msgIndex = Math.min(messages.length - 1, Math.floor(prev / 25));
           if (elapsedSec >= 90) {
             setProgressStatus(`AI 正在生成大纲，已等待 ${Math.floor(elapsedSec / 60)} 分 ${elapsedSec % 60} 秒，请稍候`);
+          } else if (elapsedSec >= 45) {
+            setProgressStatus('AI 正在生成大纲，模型响应较慢，请稍候');
           } else {
-            setProgressStatus('AI 正在生成大纲，请稍候');
+            setProgressStatus(messages[msgIndex]);
           }
-          return 90;
-        }
-        const messages = [
-          '正在准备输入内容...',
-          '正在解析论文内容...',
-          '正在提取关键信息...',
-          '正在请求大模型生成大纲...',
-        ];
-        const msgIndex = Math.min(messages.length - 1, Math.floor(prev / 25));
-        if (elapsedSec >= 90) {
-          setProgressStatus(`AI 正在生成大纲，已等待 ${Math.floor(elapsedSec / 60)} 分 ${elapsedSec % 60} 秒，请稍候`);
-        } else if (elapsedSec >= 45) {
-          setProgressStatus('AI 正在生成大纲，模型响应较慢，请稍候');
-        } else {
-          setProgressStatus(messages[msgIndex]);
-        }
-        // 调整进度速度，使其在 3 分钟左右达到 90%
-        return prev + (Math.random() * 0.6 + 0.2);
-      });
-    }, 1000);
+          return prev + (Math.random() * 0.6 + 0.2);
+        });
+      }, 1000);
 
-    try {
       const formData = new FormData();
       if (uploadMode === 'file' && selectedFile) {
         formData.append('file', selectedFile);
@@ -981,9 +1114,8 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
 
       console.log(`Sending request to /api/v1/paper2ppt/page-content with input_type=${uploadMode}`);
       
-      const res = await fetch('/api/v1/paper2ppt/page-content', {
+      const res = await backendFetch('/api/v1/paper2ppt/page-content', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
       
@@ -1018,28 +1150,37 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
         asset_ref: item.asset_ref || null,
       }));
       
-      clearInterval(progressInterval);
+      window.clearInterval(progressInterval);
+      progressInterval = null;
       setProgress(100);
       setProgressStatus('解析完成！');
       
       // 稍微延迟一下跳转，让用户看到 100%
       setTimeout(() => {
         setOutlineData(convertedSlides);
+        setConfirmedOutlineSnapshot([]);
+        setGenerateResults([]);
+        setFrontendSlides([]);
+        setFrontendDeckTheme(null);
         setCurrentStep('outline');
       }, 500);
       
     } catch (err) {
-      clearInterval(progressInterval);
+      if (progressInterval !== null) {
+        window.clearInterval(progressInterval);
+        progressInterval = null;
+      }
       setProgress(0);
       const message = err instanceof Error ? err.message : '服务器繁忙，请稍后再试';
       setError(message);
       console.error(err);
     } finally {
-      if (currentStep !== 'outline') {
-         setIsUploading(false);
-      } else {
-         setIsUploading(false);
+      if (progressInterval !== null) {
+        window.clearInterval(progressInterval);
       }
+      setIsValidating(false);
+      setIsUploading(false);
+      releaseUploadSubmitGuard();
     }
   };
 
@@ -1160,9 +1301,8 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
       formData.append('email', user?.email || '');
       formData.append('result_path', resultPath);
 
-      const res = await fetch('/api/v1/paper2ppt/outline-refine', {
+      const res = await backendFetch('/api/v1/paper2ppt/outline-refine', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
 
@@ -1338,9 +1478,8 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
       formData.append('asset_key', imageKey);
       formData.append('file', file);
 
-      const res = await fetch('/api/v1/paper2ppt/frontend/upload-asset', {
+      const res = await backendFetch('/api/v1/paper2ppt/frontend/upload-asset', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
 
@@ -1369,9 +1508,12 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
                 ? {
                     ...asset,
                     src: String(data.asset.src || asset.src || ''),
+                    previewSrc: String(data.asset.preview_src || data.asset.previewSrc || data.asset.src || asset.previewSrc || asset.src || ''),
+                    originalSrc: String(data.asset.original_src || data.asset.originalSrc || data.asset.storage_path || data.asset.storagePath || asset.originalSrc || asset.storagePath || asset.src || ''),
                     alt: String(data.asset.alt || file.name || asset.alt || ''),
                     sourceType: 'upload',
                     storagePath: String(data.asset.storage_path || data.asset.storagePath || asset.storagePath || ''),
+                    previewStoragePath: String(data.asset.preview_storage_path || data.asset.previewStoragePath || asset.previewStoragePath || ''),
                   }
                 : asset,
             ),
@@ -1425,33 +1567,51 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
   };
 
   const handleConfirmFrontendOutline = async () => {
-    const requiredPoints = Math.max(1, outlineData.length * getFrontendGenerationCostPerPage());
-    if (!(await ensureQuotaForAction(requiredPoints, `批量生成前端 PPT（${outlineData.length} 页，预计 ${requiredPoints} 点）`))) {
+    const unchangedIndices = getUnchangedPageIndices(outlineData, confirmedOutlineSnapshot);
+    const hasExistingSlides = frontendSlides.some((slide) => slide.status === 'done');
+    const skipSlides = hasExistingSlides ? unchangedIndices : [];
+    const pagesToGenerate = outlineData.length - skipSlides.length;
+    const requiredPoints = pagesToGenerate * getFrontendGenerationCostPerPage();
+
+    if (
+      requiredPoints > 0 &&
+      !(await ensureQuotaForAction(requiredPoints, `批量生成前端 PPT（${pagesToGenerate} 页，预计 ${requiredPoints} 点）`))
+    ) {
       return;
     }
 
     setCurrentStep('generate');
     setCurrentSlideIndex(0);
     setIsGenerating(true);
-    setGenerateTaskMessage(frontendIncludeImages ? '正在生成可编辑版页面代码与配图...' : '正在生成可编辑版页面代码...');
+    if (skipSlides.length > 0) {
+      setGenerateTaskMessage(`复用 ${skipSlides.length} 页未修改内容，重新生成 ${pagesToGenerate} 页可编辑版页面...`);
+    } else {
+      setGenerateTaskMessage(frontendIncludeImages ? '正在生成可编辑版页面代码与配图...' : '正在生成可编辑版页面代码...');
+    }
     setError(null);
 
-    const pendingSlides: FrontendSlide[] = outlineData.map((slide, index) => ({
-      slideId: slide.id,
-      pageNum: index + 1,
-      title: slide.title,
-      htmlTemplate: '',
-      cssCode: '',
-      editableFields: [],
-      visualAssets: [],
-      status: 'processing',
-      generationNote: '',
-      review: {
-        status: 'idle',
-        summary: '',
-        issues: [],
-      },
-    }));
+    const skipSet = new Set(skipSlides);
+    const pendingSlides: FrontendSlide[] = outlineData.map((slide, index) => {
+      if (skipSet.has(index) && index < frontendSlides.length && frontendSlides[index].status === 'done') {
+        return { ...frontendSlides[index] };
+      }
+      return {
+        slideId: slide.id,
+        pageNum: index + 1,
+        title: slide.title,
+        htmlTemplate: '',
+        cssCode: '',
+        editableFields: [],
+        visualAssets: [],
+        status: 'processing',
+        generationNote: '',
+        review: {
+          status: 'idle',
+          summary: '',
+          issues: [],
+        },
+      };
+    });
     frontendCaptureRefs.current = [];
     setFrontendSlides(pendingSlides);
 
@@ -1469,10 +1629,13 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
       formData.append('image_style', frontendImageStyle);
       formData.append('image_model', genFigModel);
       formData.append('pagecontent', buildFrontendPagecontentPayload());
+      if (skipSlides.length > 0) {
+        formData.append('skip_slides', JSON.stringify(skipSlides));
+      }
 
-      const res = await fetch('/api/v1/paper2ppt/frontend/generate', {
+      const res = await backendFetch('/api/v1/paper2ppt/frontend/generate', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
+        headers: requiredPoints > 0 ? { 'X-Workflow-Amount': String(requiredPoints) } : undefined,
         body: formData,
       });
 
@@ -1490,20 +1653,33 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
       }
       const normalizedTheme = normalizeFrontendDeckTheme(data.theme);
       const normalizedSlides = normalizeFrontendSlides(data.slides);
+      const mergedSlides = pendingSlides.map((pendingSlide, index) => {
+        if (skipSet.has(index) && pendingSlide.status === 'done') {
+          return pendingSlide;
+        }
+        return normalizedSlides.find((slide) => slide.pageNum === index + 1) || pendingSlide;
+      });
       setFrontendDeckTheme(normalizedTheme);
-      setFrontendSlides(normalizedSlides);
+      setFrontendSlides(mergedSlides);
+      setConfirmedOutlineSnapshot(cloneOutlineSnapshot(outlineData));
       if (frontendAutoReviewEnabled) {
-        await runInitialFrontendReviewPass(normalizedSlides, data.result_path || resultPath || '');
+        await runInitialFrontendReviewPass(mergedSlides, data.result_path || resultPath || '');
       }
-      await consumeQuotaForAction(
-        'paper2ppt',
-        requiredPoints,
-        `可编辑版 PPT 页面已生成，但 ${requiredPoints} 点扣费记录失败，请刷新余额确认。`,
-      );
+      if (requiredPoints > 0) {
+        await consumeQuotaForAction(
+          'paper2ppt',
+          requiredPoints,
+          `可编辑版 PPT 页面已生成，但 ${requiredPoints} 点扣费记录失败，请刷新余额确认。`,
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : '可编辑版 PPT 生成失败';
       setError(message);
-      setFrontendSlides(pendingSlides.map((slide) => ({ ...slide, status: 'pending' })));
+      setFrontendSlides(
+        pendingSlides.map((slide) =>
+          slide.status === 'done' ? slide : { ...slide, status: 'pending' as const },
+        ),
+      );
     } finally {
       setGenerateTaskMessage('');
       setIsGenerating(false);
@@ -1511,106 +1687,158 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
   };
 
   const handleConfirmOutline = async () => {
-    if (isRefiningOutline) return;
-    if (pptMode === 'frontend') {
-      await handleConfirmFrontendOutline();
-      return;
-    }
-    const requiredPoints = Math.max(1, outlineData.length);
-    if (!(await ensureQuotaForAction(requiredPoints, `批量生成 ${requiredPoints} 页 PPT`))) {
-      return;
-    }
-    setCurrentStep('generate');
-    setCurrentSlideIndex(0);
-    setIsGenerating(true);
-    setGenerateTaskMessage('');
-    setError(null);
-    
-    const results: GenerateResult[] = outlineData.map((slide) => ({
-      slideId: slide.id,
-      beforeImage: '',
-      afterImage: '',
-      status: 'processing' as const,
-      versionHistory: [],
-      currentVersionIndex: -1,
-    }));
-    setGenerateResults(results);
-    
     try {
-      const formData = new FormData();
-      formData.append('img_gen_model_name', genFigModel);
-      formData.append('credential_scope', MANAGED_CREDENTIAL_SCOPE);
-      formData.append('chat_api_url', llmApiUrl.trim());
-      formData.append('api_key', apiKey.trim());
-      formData.append('model', model);
-      formData.append('language', language);
-      formData.append('style', getEffectiveStylePrompt());
-      formData.append('aspect_ratio', '16:9');
-      formData.append('email', user?.id || user?.email || '');
-      formData.append('result_path', resultPath || '');
-      formData.append('get_down', 'false');
+      if (isRefiningOutline || isGenerating || isOutlineSubmitLocked || outlineSubmitGuardRef.current) {
+        return;
+      }
+      outlineSubmitGuardRef.current = true;
+      setIsOutlineSubmitLocked(true);
 
-      // 如果用户选的是参考图模式，附加参考图，保留用户显式输入的风格提示词
-      if (styleMode === 'reference' && referenceImage) {
-        formData.append('reference_img', referenceImage);
-        formData.set('style', globalPrompt || '');
+      if (pptMode === 'frontend') {
+        await handleConfirmFrontendOutline();
+        return;
       }
 
-      const pagecontent = outlineData.map((slide) => ({
-        title: slide.title,
-        layout_description: slide.layout_description,
-        key_points: slide.key_points,
-        asset_ref: slide.asset_ref,
-      }));
-      formData.append('pagecontent', JSON.stringify(pagecontent));
+      const unchangedIndices = getUnchangedPageIndices(outlineData, confirmedOutlineSnapshot);
+      const hasExistingResults = generateResults.some((result) => result.status === 'done' && result.afterImage);
+      const skipPages = hasExistingResults ? unchangedIndices : [];
+      const pagesToGenerate = outlineData.length - skipPages.length;
+      const requiredPoints = pagesToGenerate;
 
-      const task = await submitPaper2PptTask(formData);
-      setGenerateTaskMessage(task.message || '批量生成任务已提交');
-
-      const data = await pollPaper2PptTask(task.task_id, (status) => {
-        setGenerateTaskMessage(status.message || '正在生成页面');
-      });
-
-      if (data.result_path) {
-        setResultPath(data.result_path);
+      if (
+        requiredPoints > 0 &&
+        !(await ensureQuotaForAction(requiredPoints, `批量生成 ${pagesToGenerate} 页 PPT`))
+      ) {
+        return;
       }
+      setCurrentStep('generate');
+      setCurrentSlideIndex(0);
+      setIsGenerating(true);
+      if (skipPages.length > 0) {
+        setGenerateTaskMessage(`复用 ${skipPages.length} 页未修改内容，重新生成 ${pagesToGenerate} 页...`);
+      } else {
+        setGenerateTaskMessage('');
+      }
+      setError(null);
 
-      const updatedResults = results.map((result, index) => {
-        const pageNumStr = String(index).padStart(3, '0');
-        let afterImage = '';
-        
-        if (data.all_output_files && Array.isArray(data.all_output_files)) {
-          const pageImg = data.all_output_files.find((url: string) => 
-            url.includes(`ppt_pages/page_${pageNumStr}.png`)
-          );
-          if (pageImg) {
-            afterImage = pageImg;
-          }
+      const skipSet = new Set(skipPages);
+      const results: GenerateResult[] = outlineData.map((slide, index) => {
+        if (skipSet.has(index) && index < generateResults.length && generateResults[index].status === 'done') {
+          return { ...generateResults[index] };
         }
-        
         return {
-          ...result,
-          afterImage,
-          status: 'done' as const,
+          slideId: slide.id,
+          beforeImage: slide.asset_ref || '',
+          beforeImagePreview: slide.asset_ref_preview_path || slide.asset_ref || '',
+          afterImage: '',
+          afterImagePreview: '',
+          status: 'processing' as const,
+          versionHistory: [],
+          currentVersionIndex: -1,
         };
       });
+      setGenerateResults(results);
       
-      preloadGeneratedImages(data.all_output_files);
-      
-      setGenerateResults(updatedResults);
-      await consumeQuotaForAction(
-        'paper2ppt',
-        requiredPoints,
-        `PPT 页面已生成，但 ${requiredPoints} 点扣费记录失败，请刷新余额确认。`,
-      );
-      
-    } catch (err) {
-      const message = err instanceof Error ? err.message : '服务器繁忙，请稍后再试';
-      setError(message);
-      setGenerateResults(results.map(r => ({ ...r, status: 'pending' as const })));
+      try {
+        const formData = new FormData();
+        formData.append('img_gen_model_name', genFigModel);
+        formData.append('credential_scope', MANAGED_CREDENTIAL_SCOPE);
+        formData.append('chat_api_url', llmApiUrl.trim());
+        formData.append('api_key', apiKey.trim());
+        formData.append('model', model);
+        formData.append('language', language);
+        formData.append('style', getEffectiveStylePrompt());
+        formData.append('aspect_ratio', '16:9');
+        formData.append('email', user?.id || user?.email || '');
+        formData.append('result_path', resultPath || '');
+        formData.append('get_down', 'false');
+        if (skipPages.length > 0) {
+          formData.append('skip_pages', JSON.stringify(skipPages));
+        }
+
+        // 如果用户选的是参考图模式，附加参考图，保留用户显式输入的风格提示词
+        if (styleMode === 'reference' && referenceImage) {
+          formData.append('reference_img', referenceImage);
+          formData.set('style', globalPrompt || '');
+        }
+
+        const pagecontent = outlineData.map((slide) => ({
+          title: slide.title,
+          layout_description: slide.layout_description,
+          key_points: slide.key_points,
+          asset_ref: slide.asset_ref,
+        }));
+        formData.append('pagecontent', JSON.stringify(pagecontent));
+
+        const task = await submitPaper2PptTask(formData, requiredPoints > 0 ? requiredPoints : undefined);
+        if (skipPages.length > 0) {
+          setGenerateTaskMessage(`复用 ${skipPages.length} 页，正在生成 ${pagesToGenerate} 页...`);
+        } else {
+          setGenerateTaskMessage(task.message || '批量生成任务已提交');
+        }
+
+        const data = await pollPaper2PptTask(task.task_id, (status) => {
+          setGenerateTaskMessage(status.message || '正在生成页面');
+        });
+
+        if (data.result_path) {
+          setResultPath(data.result_path);
+        }
+
+        const updatedResults = results.map((result, index) => {
+          if (skipSet.has(index) && result.status === 'done' && result.afterImage) {
+            return result;
+          }
+          const pageNumStr = String(index).padStart(3, '0');
+          let afterImage = '';
+          let afterImagePreview = '';
+          const pageMeta = Array.isArray(data.pagecontent) ? data.pagecontent[index] : null;
+          
+          if (data.all_output_files && Array.isArray(data.all_output_files)) {
+            const pageImg = data.all_output_files.find((url: string) => 
+              url.includes(`ppt_pages/page_${pageNumStr}.png`)
+            );
+            if (pageImg) {
+              afterImage = pageImg;
+            }
+          }
+          afterImagePreview =
+            getPreviewPath(pageMeta, 'generated_img_path')
+            || getPreviewPath(pageMeta, 'asset_ref')
+            || afterImage;
+          
+          return {
+            ...result,
+            afterImage,
+            afterImagePreview,
+            status: 'done' as const,
+          };
+        });
+        
+        preloadGeneratedImages(data.all_output_files);
+        
+        setGenerateResults(updatedResults);
+        setConfirmedOutlineSnapshot(cloneOutlineSnapshot(outlineData));
+        if (requiredPoints > 0) {
+          await consumeQuotaForAction(
+            'paper2ppt',
+            requiredPoints,
+            `PPT 页面已生成，但 ${requiredPoints} 点扣费记录失败，请刷新余额确认。`,
+          );
+        }
+        
+      } catch (err) {
+        const message = err instanceof Error ? err.message : '服务器繁忙，请稍后再试';
+        setError(message);
+        setGenerateResults(results.map((result) => (
+          result.status === 'done' ? result : { ...result, status: 'pending' as const }
+        )));
+      } finally {
+        setGenerateTaskMessage('');
+        setIsGenerating(false);
+      }
     } finally {
-      setGenerateTaskMessage('');
-      setIsGenerating(false);
+      releaseOutlineSubmitGuard();
     }
   };
 
@@ -1641,10 +1869,7 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
 
     try {
       const encodedPath = btoa(resultPath);
-      const res = await fetch(
-        `/api/v1/paper2ppt/version-history/${encodedPath}/${pageIndex}`,
-        { headers: { 'X-API-Key': API_KEY } }
-      );
+      const res = await backendFetch(`/api/v1/paper2ppt/version-history/${encodedPath}/${pageIndex}`);
 
       if (!res.ok) return;
 
@@ -1686,9 +1911,8 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
       formData.append('page_id', String(currentSlideIndex));
       formData.append('target_version', String(versionNumber));
 
-      const res = await fetch('/api/v1/paper2ppt/revert-version', {
+      const res = await backendFetch('/api/v1/paper2ppt/revert-version', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
 
@@ -1701,6 +1925,7 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
         updatedResults[currentSlideIndex] = {
           ...updatedResults[currentSlideIndex],
           afterImage: data.currentImageUrl + '?t=' + Date.now(),
+          afterImagePreview: data.currentImageUrl + '?t=' + Date.now(),
           currentVersionIndex: versionNumber - 1,
         };
         setGenerateResults(updatedResults);
@@ -1722,6 +1947,20 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
   ) => {
     setFrontendSlides((prev) =>
       prev.map((slide, index) => (index === slideIndex ? { ...slide, review } : slide)),
+    );
+  };
+
+  const saveCurrentSlideEdits = (layoutDescription: string, keyPoints: string[]) => {
+    setOutlineData((prev) =>
+      prev.map((slide, slideIndex) =>
+        slideIndex !== currentSlideIndex
+          ? slide
+          : {
+              ...slide,
+              layout_description: layoutDescription,
+              key_points: keyPoints.length > 0 ? keyPoints : [''],
+            },
+      ),
     );
   };
 
@@ -1930,6 +2169,7 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
       return;
     }
 
+    setGenerateTaskMessage('当前页正在进行视觉检查，请稍候，检查完成后“确认并继续”会自动恢复可点击状态。');
     setIsReviewingFrontendSlide(true);
     setError(null);
     updateFrontendSlideReview(targetIndex, {
@@ -2007,6 +2247,120 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
       });
     } finally {
       setIsReviewingFrontendSlide(false);
+      setGenerateTaskMessage('');
+    }
+  };
+
+  const handleRegenerateSlideFromOutline = async () => {
+    if (!resultPath) {
+      setError('缺少 result_path，请重新上传文件');
+      return;
+    }
+    if (!(await ensureQuotaForAction(1, '按当前页面内容重新生成'))) {
+      return;
+    }
+
+    setIsGenerating(true);
+    setGenerateTaskMessage('正在按当前页面内容重新生成...');
+    setError(null);
+
+    const updatedResults = [...generateResults];
+    updatedResults[currentSlideIndex] = {
+      ...updatedResults[currentSlideIndex],
+      status: 'processing',
+    };
+    setGenerateResults(updatedResults);
+
+    try {
+      const formData = new FormData();
+      formData.append('img_gen_model_name', genFigModel);
+      formData.append('credential_scope', MANAGED_CREDENTIAL_SCOPE);
+      formData.append('chat_api_url', llmApiUrl.trim());
+      formData.append('api_key', apiKey.trim());
+      formData.append('model', model);
+      formData.append('language', language);
+      formData.append('style', getEffectiveStylePrompt());
+      formData.append('aspect_ratio', '16:9');
+      formData.append('email', user?.id || user?.email || '');
+      formData.append('result_path', resultPath);
+      formData.append('get_down', 'true');
+      formData.append('page_id', String(currentSlideIndex));
+      formData.append('regenerate_from_outline', 'true');
+
+      if (styleMode === 'reference' && referenceImage) {
+        formData.append('reference_img', referenceImage);
+        formData.set('style', globalPrompt || '');
+      }
+
+      formData.append('pagecontent', JSON.stringify(buildPagecontentForGeneration()));
+
+      const res = await backendFetch('/api/v1/paper2ppt/generate', {
+        method: 'POST',
+        headers: { 'X-Workflow-Amount': '1' },
+        body: formData,
+      });
+
+      if (!res.ok) {
+        throw new Error(await extractErrorMessage(res, '服务器繁忙，请稍后再试'));
+      }
+
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.error || '服务器繁忙，请稍后再试');
+      }
+
+      const pageNumStr = String(currentSlideIndex).padStart(3, '0');
+      let afterImage = updatedResults[currentSlideIndex].afterImage;
+      let afterImagePreview = updatedResults[currentSlideIndex].afterImagePreview || afterImage;
+
+      if (data.all_output_files && Array.isArray(data.all_output_files)) {
+        const pageImg = data.all_output_files.find((url: string) =>
+          url.includes(`ppt_pages/page_${pageNumStr}.png`)
+        );
+        if (pageImg) {
+          afterImage = `${pageImg}?t=${Date.now()}`;
+        }
+      }
+      const pageMeta = Array.isArray(data.pagecontent) ? data.pagecontent[currentSlideIndex] : null;
+      afterImagePreview =
+        getPreviewPath(pageMeta, 'generated_img_path')
+        || getPreviewPath(pageMeta, 'asset_ref')
+        || afterImage;
+
+      updatedResults[currentSlideIndex] = {
+        ...updatedResults[currentSlideIndex],
+        afterImage,
+        afterImagePreview,
+        status: 'done',
+      };
+      setGenerateResults([...updatedResults]);
+      setConfirmedOutlineSnapshot((prev) => {
+        const next = prev.length > 0 ? cloneOutlineSnapshot(prev) : cloneOutlineSnapshot(outlineData);
+        if (currentSlideIndex < outlineData.length) {
+          next[currentSlideIndex] = {
+            ...outlineData[currentSlideIndex],
+            key_points: [...outlineData[currentSlideIndex].key_points],
+          };
+        }
+        return next;
+      });
+      await fetchVersionHistory(currentSlideIndex);
+      await consumeQuotaForAction(
+        'paper2ppt',
+        1,
+        '页面已按当前内容重新生成，但 1 点扣费记录失败，请刷新余额确认。',
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '服务器繁忙，请稍后再试';
+      setError(message);
+      updatedResults[currentSlideIndex] = {
+        ...updatedResults[currentSlideIndex],
+        status: 'done',
+      };
+      setGenerateResults(updatedResults);
+    } finally {
+      setGenerateTaskMessage('');
+      setIsGenerating(false);
     }
   };
 
@@ -2061,32 +2415,10 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
         formData.set('style', globalPrompt || '');
       }
 
-      const pagecontent = outlineData.map((slide, idx) => {
-        const result = generateResults[idx];
-        let generatedPath = '';
-        if (result?.afterImage) {
-          generatedPath = result.afterImage;
-        }
-        console.log(`[handleRegenerateSlide] 页面${idx}: afterImage=${result?.afterImage}, generatedPath=${generatedPath}`);
-        return {
-          title: slide.title,
-          layout_description: slide.layout_description,
-          key_points: slide.key_points,
-          asset_ref: slide.asset_ref,
-          generated_img_path: generatedPath || undefined,
-        };
-      });
-      console.log(`[handleRegenerateSlide] 当前编辑页面: ${currentSlideIndex}`);
-      console.log(`[handleRegenerateSlide] 完整pagecontent:`, JSON.stringify(pagecontent.map((p, i) => ({
-        idx: i,
-        title: p.title,
-        generated_img_path: p.generated_img_path
-      })), null, 2));
-      formData.append('pagecontent', JSON.stringify(pagecontent));
+      formData.append('pagecontent', JSON.stringify(buildPagecontentForGeneration()));
 
-      const res = await fetch('/api/v1/paper2ppt/generate', {
+      const res = await backendFetch('/api/v1/paper2ppt/generate', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
       
@@ -2102,6 +2434,7 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
 
       const pageNumStr = String(currentSlideIndex).padStart(3, '0');
       let afterImage = updatedResults[currentSlideIndex].afterImage;
+      let afterImagePreview = updatedResults[currentSlideIndex].afterImagePreview || afterImage;
       
       if (data.all_output_files && Array.isArray(data.all_output_files)) {
         const pageImg = data.all_output_files.find((url: string) => 
@@ -2111,10 +2444,16 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
           afterImage = pageImg + '?t=' + Date.now();
         }
       }
+      const pageMeta = Array.isArray(data.pagecontent) ? data.pagecontent[currentSlideIndex] : null;
+      afterImagePreview =
+        getPreviewPath(pageMeta, 'generated_img_path')
+        || getPreviewPath(pageMeta, 'asset_ref')
+        || afterImage;
       
       updatedResults[currentSlideIndex] = {
         ...updatedResults[currentSlideIndex],
         afterImage,
+        afterImagePreview,
         status: 'done',
       };
       setGenerateResults([...updatedResults]);
@@ -2176,7 +2515,9 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
         }
         setFinalTaskMessage(`正在渲染第 ${index + 1}/${frontendSlides.length} 页截图...`);
         await sleep(40);
-        const blob = await captureSlideToPngBlob(node, 1600, 900);
+        const blob = await captureSlideToPngBlob(node, 1600, 900, {
+          useOriginalAssets: true,
+        });
         if (!blob) {
           throw new Error(`第 ${index + 1} 页截图失败`);
         }
@@ -2198,9 +2539,8 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
       });
 
       setFinalTaskMessage('正在打包 PPTX / PDF...');
-      const res = await fetch('/api/v1/paper2ppt/frontend/export', {
+      const res = await backendFetch('/api/v1/paper2ppt/frontend/export', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
       if (!res.ok) {
@@ -2386,6 +2726,7 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
     setCurrentStep('upload');
     setSelectedFile(null);
     setOutlineData([]);
+    setConfirmedOutlineSnapshot([]);
     setGenerateResults([]);
     setFrontendSlides([]);
     setFrontendDeckTheme(null);
@@ -2423,6 +2764,7 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
               globalPrompt={globalPrompt} setGlobalPrompt={setGlobalPrompt}
               referenceImage={referenceImage} referenceImagePreview={referenceImagePreview}
               isUploading={isUploading} isValidating={isValidating}
+              isUploadSubmitLocked={isUploadSubmitLocked}
               pageCount={pageCount} setPageCount={setPageCount}
               useLongPaper={useLongPaper} setUseLongPaper={setUseLongPaper}
               frontendIncludeImages={frontendIncludeImages}
@@ -2433,6 +2775,7 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
               setFrontendImageStyle={setFrontendImageStyle}
               progress={progress} progressStatus={progressStatus}
               error={error}
+              purchaseUrl={purchaseUrl}
               showApiConfig={userApiConfigRequired}
               llmApiUrl={llmApiUrl} setLlmApiUrl={setLlmApiUrl}
               apiKey={apiKey} setApiKey={setApiKey}
@@ -2469,6 +2812,7 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
           outlineFeedback={outlineFeedback}
           setOutlineFeedback={setOutlineFeedback}
           isRefiningOutline={isRefiningOutline}
+          isGenerating={isGenerating || isOutlineSubmitLocked}
         />
       )}
           
@@ -2511,6 +2855,8 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
                 taskMessage={generateTaskMessage}
                 slidePrompt={slidePrompt}
                 setSlidePrompt={setSlidePrompt}
+                saveCurrentSlideEdits={saveCurrentSlideEdits}
+                handleRegenerateSlideFromOutline={handleRegenerateSlideFromOutline}
                 handleRegenerateSlide={handleRegenerateSlide}
                 handleConfirmSlide={handleConfirmSlide}
                 setCurrentStep={setCurrentStep}

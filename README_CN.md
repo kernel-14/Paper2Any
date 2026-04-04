@@ -117,17 +117,37 @@ Paper2Any 当前包含以下几个子能力：
 
 <div align="center">
 
+<table>
+  <tr>
+    <td width="33%" align="center" valign="top">
+      <img src="static/new_readme/drawio/image-to-drawio-upload.png" width="100%"/>
+      <br><sub>✨ 上传论文配图或截图，作为可编辑 DrawIO 的起点</sub>
+    </td>
+    <td width="34%" align="center" valign="top">
+      <img src="static/new_readme/drawio/image-to-drawio-source.png" width="100%"/>
+      <br><sub>✨ 转换前保留原图结构，便于对照核验</sub>
+    </td>
+    <td width="33%" align="center" valign="top">
+      <img src="static/new_readme/drawio/image-to-drawio-editor.gif" width="100%"/>
+      <br><sub>✨ 图片一键转成可编辑 DrawIO 画布</sub>
+    </td>
+  </tr>
+</table>
+
 <br>
-<img src="static/new_readme/drawio/drawio-1.gif" width="90%"/>
-<br><sub>✨ Diagram 生成（思维导图 / 流程图 / ER 图 ......）</sub>
 
-<br><br>
-<img src="static/new_readme/drawio/drawio-2.gif" width="90%"/>
-<br><sub>✨ 模型图生成：上传 PDF 或输入文本，自动生成科研绘图</sub>
-
-<br><br>
-<img src="static/new_readme/drawio/image-to-editable.png" width="90%"/>
-<br><sub>✨ 图片转可编辑 DrawIO 图</sub>
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="static/new_readme/drawio/framework-drawio-workbench.png" width="100%"/>
+      <br><sub>✨ 在 DrawIO 工作台里直接生成模型图 / 系统框架图</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="static/new_readme/drawio/framework-drawio-editor.gif" width="100%"/>
+      <br><sub>✨ 生成后可继续对话式编辑，并导出为展示友好的成品图</sub>
+    </td>
+  </tr>
+</table>
 
 </div>
 
@@ -183,37 +203,57 @@ Paper2Any 当前包含以下几个子能力：
 
 <div align="center">
 
-<br>
-<img src="static/new_readme/paper2ppt/demo.gif" width="85%"/>
-<br><sub>✨ PPT生成案例</sub>
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="static/new_readme/paper2ppt/demo.gif" width="100%"/>
+      <br><sub>✨ 端到端 PPT 生成演示</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="static/new_readme/paper2ppt/case-1.png" width="100%"/>
+      <br><sub>✨ 从论文 / 文本 / 主题生成完整演示文稿</sub>
+    </td>
+  </tr>
+</table>
 
 <br>
-<img src="static/new_readme/paper2ppt/case-1.png" width="90%"/>
-<br><sub>✨ Paper / Text / Topic → PPT</sub>
 
-<br><br>
-<img src="static/new_readme/paper2ppt/frontend-gallery.png" width="90%"/>
-<br><sub>✨ 可编辑版前端 deck 总览，多页生成结果与后续截图导出链路一目了然</sub>
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="static/new_readme/paper2ppt/frontend-canvas-edit.gif" width="100%"/>
+      <br><sub>✨ 主题锁定下的画布内直接改字与逐页修订</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="static/new_readme/paper2ppt/frontend-gallery-review.gif" width="100%"/>
+      <br><sub>✨ 导出前集中检查多页生成结果</sub>
+    </td>
+  </tr>
+</table>
 
-<br><br>
-<img src="static/new_readme/paper2ppt/frontend-editor.png" width="90%"/>
-<br><sub>✨ 可编辑工作区：支持主题锁定、画布内改字，以及手动视觉检查与修复</sub>
+<br>
 
-<br><br>
-<img src="static/new_readme/paper2ppt/long-doc.png" width="85%"/>
-<br><sub>✨ 超长文档支持 (40+ 页 PPT)</sub>
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="static/new_readme/paper2ppt/outline-assist-panel.png" width="100%"/>
+      <br><sub>✨ AI 辅助修改入口，支持定向补写与风格调整</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="static/new_readme/paper2ppt/outline-assist-detail.png" width="100%"/>
+      <br><sub>✨ 细粒度大纲编辑，可直接调整章节与要点</sub>
+    </td>
+  </tr>
+</table>
 
-<br><br>
-<img src="static/new_readme/paper2ppt/table-extraction.png" width="90%"/>
-<br><sub>✨ 智能表格提取与插入</sub>
+<br>
 
-<br><br>
-<img src="static/new_readme/paper2ppt/outline-edit.png" width="90%"/>
-<br><sub>✨ AI 辅助编辑大纲</sub>
-
-<br><br>
-<img src="static/new_readme/paper2ppt/version-history.png" width="90%"/>
-<br><sub>✨ 历史版本管理</sub>
+<img src="static/new_readme/paper2ppt/long-doc.png" width="78%"/>
+<br>
+<img src="static/new_readme/paper2ppt/table-extraction.png" width="80%"/>
+<br>
+<img src="static/new_readme/paper2ppt/version-history.png" width="80%"/>
+<br><sub>✨ 超长文档支持（40+ 页） · 智能表格提取与插入 · 历史版本管理与迭代回溯</sub>
 
 </div>
 

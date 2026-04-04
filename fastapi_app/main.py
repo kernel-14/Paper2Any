@@ -31,11 +31,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from fastapi_app.config import settings
 from fastapi_app.routers import account
 from fastapi_app.routers import paper2video
 from fastapi_app.routers import paper2any, paper2citation, paper2ppt, paper2poster
 from fastapi_app.routers import pdf2ppt, image2ppt, kb, kb_embedding, files
 from fastapi_app.routers import image2drawio
+from fastapi_app.routers import mindmap
 from fastapi_app.routers import paper2drawio
 from fastapi_app.routers import paper2rebuttal
 from fastapi_app.middleware.api_key import APIKeyMiddleware
@@ -43,6 +45,13 @@ from dataflow_agent.utils import get_project_root
 from dataflow_agent.logger import get_logger
 
 log = get_logger(__name__)
+
+
+def _parse_cors_allow_origins(raw_value: str) -> list[str]:
+    raw = (raw_value or "").strip()
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def create_app() -> FastAPI:
@@ -60,10 +69,13 @@ def create_app() -> FastAPI:
         description="HTTP API wrapper for dataflow_agent.workflow.* pipelines",
     )
 
+    allow_origins = _parse_cors_allow_origins(settings.CORS_ALLOW_ORIGINS)
+    allow_credentials = bool(allow_origins) and "*" not in allow_origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=allow_origins,
+        allow_origin_regex=settings.CORS_ALLOW_ORIGIN_REGEX or None,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -89,6 +101,8 @@ def create_app() -> FastAPI:
     app.include_router(image2ppt.router, prefix="/api/v1", tags=["image2ppt"])
     # Image2DrawIO
     app.include_router(image2drawio.router, prefix="/api/v1", tags=["image2drawio"])
+    # MindMap
+    app.include_router(mindmap.router, prefix="/api/v1", tags=["mindmap"])
     # 知识库接口
     app.include_router(kb.router, prefix="/api/v1", tags=["Knowledge Base"])
     app.include_router(kb_embedding.router, prefix="/api/v1", tags=["Knowledge Base Embedding"])

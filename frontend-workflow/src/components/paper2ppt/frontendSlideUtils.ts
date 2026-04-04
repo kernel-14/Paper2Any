@@ -2,6 +2,7 @@ import { FrontendEditableField, FrontendSlide, FrontendVisualAsset } from './typ
 
 const FIELD_PLACEHOLDER_RE = /\{\{(?:field|list):([a-zA-Z0-9_]+)\}\}/g;
 const IMAGE_PLACEHOLDER_RE = /\{\{image:([a-zA-Z0-9_]+)\}\}/g;
+const ATTRIBUTE_RE = /([^\s"'<>/=]+)\s*=\s*(["'])([\s\S]*?)\2/g;
 const FORBIDDEN_HTML_RE = /<\s*(script|iframe|img|video|audio|canvas|svg)\b|on[a-z]+\s*=/i;
 const FORBIDDEN_CSS_RE = /@import|url\s*\(|(?:^|[,{])\s*(?:body|html|:root|#root)\b|position\s*:\s*fixed/i;
 
@@ -14,6 +15,9 @@ const escapeHtml = (value: string) =>
     .replace(/'/g, '&#39;');
 
 const formatTextValue = (value: string) => escapeHtml(value).replace(/\n/g, '<br />');
+
+const formatAttributeValue = (value: string) =>
+  escapeHtml(value.replace(/\s+/g, ' ').trim());
 
 const sanitizeTemplate = (value: string) =>
   value
@@ -55,6 +59,53 @@ const renderFieldValue = (field: FrontendEditableField) => {
   return wrapEditableText(field, formatTextValue(field.value || ''));
 };
 
+const getAttributeFieldValue = (field: FrontendEditableField | undefined) => {
+  if (!field) return '';
+  if (field.type === 'list') {
+    return field.items.filter((item) => item.trim()).join(' • ');
+  }
+  return field.value || '';
+};
+
+const replaceAttributePlaceholders = (
+  html: string,
+  editableFields: FrontendEditableField[],
+) => {
+  const fieldMap = new Map(editableFields.map((field) => [field.key, field]));
+  return html.replace(ATTRIBUTE_RE, (match, attrName: string, quote: string, attrValue: string) => {
+    const nextValue = attrValue
+      .replace(/\{\{field:([a-zA-Z0-9_]+)\}\}/g, (_token, key: string) =>
+        formatAttributeValue(getAttributeFieldValue(fieldMap.get(key))),
+      )
+      .replace(/\{\{list:([a-zA-Z0-9_]+)\}\}/g, (_token, key: string) =>
+        formatAttributeValue(getAttributeFieldValue(fieldMap.get(key))),
+      )
+      .replace(/\{\{image:([a-zA-Z0-9_]+)\}\}/g, '');
+    if (nextValue === attrValue) {
+      return match;
+    }
+    return `${attrName}=${quote}${nextValue}${quote}`;
+  });
+};
+
+const collectAttributePlaceholderKeys = (html: string) => {
+  const fieldKeys = new Set<string>();
+  const imageKeys = new Set<string>();
+  for (const match of html.matchAll(ATTRIBUTE_RE)) {
+    const attrValue = match[3] || '';
+    for (const fieldMatch of attrValue.matchAll(FIELD_PLACEHOLDER_RE)) {
+      fieldKeys.add(fieldMatch[1]);
+    }
+    for (const imageMatch of attrValue.matchAll(IMAGE_PLACEHOLDER_RE)) {
+      imageKeys.add(imageMatch[1]);
+    }
+  }
+  return {
+    fieldKeys: Array.from(fieldKeys),
+    imageKeys: Array.from(imageKeys),
+  };
+};
+
 const getVisualSourceLabel = (asset: FrontendVisualAsset) => {
   switch (asset.sourceType) {
     case 'paper_asset':
@@ -71,9 +122,10 @@ const renderVisualAsset = (asset: FrontendVisualAsset) => {
   const assetLabel = escapeHtml(asset.label || asset.key || 'Image');
   const assetAlt = escapeHtml(asset.alt || asset.label || asset.key || 'Slide image');
   const sourceLabel = escapeHtml(getVisualSourceLabel(asset));
-  const assetSrc = (asset.src || '').trim();
+  const previewSrc = (asset.previewSrc || asset.src || '').trim();
+  const originalSrc = (asset.originalSrc || previewSrc || '').trim();
 
-  if (!assetSrc) {
+  if (!previewSrc) {
     return `
 <div class="ppt-managed-image" data-image-key="${assetKey}" data-image-label="${assetLabel}">
   <div class="ppt-managed-image-frame ppt-managed-image-frame-empty">
@@ -87,7 +139,7 @@ const renderVisualAsset = (asset: FrontendVisualAsset) => {
   return `
 <div class="ppt-managed-image" data-image-key="${assetKey}" data-image-label="${assetLabel}">
   <div class="ppt-managed-image-frame">
-    <img src="${escapeHtml(assetSrc)}" alt="${assetAlt}" class="ppt-managed-image-el" />
+    <img src="${escapeHtml(previewSrc)}" data-preview-src="${escapeHtml(previewSrc)}" data-original-src="${escapeHtml(originalSrc)}" alt="${assetAlt}" class="ppt-managed-image-el" />
   </div>
   <div class="ppt-managed-image-badge">${sourceLabel}</div>
 </div>
@@ -96,6 +148,7 @@ const renderVisualAsset = (asset: FrontendVisualAsset) => {
 
 export const buildFrontendSlideMarkup = (slide: FrontendSlide) => {
   let html = ensureSlideRoot(sanitizeTemplate(slide.htmlTemplate || ''));
+  html = replaceAttributePlaceholders(html, slide.editableFields);
   slide.editableFields.forEach((field) => {
     const listToken = `{{list:${field.key}}}`;
     const fieldToken = `{{field:${field.key}}}`;
@@ -237,6 +290,7 @@ export const validateFrontendSlideCode = (
   const availableImageKeys = new Set(slide.visualAssets.map((asset) => asset.key));
   const fieldPlaceholderKeys = Array.from(sanitizedHtml.matchAll(FIELD_PLACEHOLDER_RE)).map((match) => match[1]);
   const imagePlaceholderKeys = Array.from(sanitizedHtml.matchAll(IMAGE_PLACEHOLDER_RE)).map((match) => match[1]);
+  const attributePlaceholders = collectAttributePlaceholderKeys(sanitizedHtml);
 
   if (fieldPlaceholderKeys.length === 0 && imagePlaceholderKeys.length === 0) {
     issues.push('HTML 中至少需要保留一个 `{{field:...}}`、`{{list:...}}` 或 `{{image:...}}` 占位符。');
@@ -252,16 +306,28 @@ export const validateFrontendSlideCode = (
     issues.push(`发现未知图片占位符字段：${unknownImageKeys.join('、')}。`);
   }
 
+  if (attributePlaceholders.fieldKeys.length > 0) {
+    issues.push(
+      `文本占位符不能放在 HTML 属性里，例如 aria-label/title/alt。请改成正文节点占位符：${attributePlaceholders.fieldKeys.join('、')}。`,
+    );
+  }
+
+  if (attributePlaceholders.imageKeys.length > 0) {
+    issues.push(
+      `图片占位符不能放在 HTML 属性里，只能放在元素内容区域：${attributePlaceholders.imageKeys.join('、')}。`,
+    );
+  }
+
   const unusedKeys = slide.editableFields
     .map((field) => field.key)
-    .filter((key) => !fieldPlaceholderKeys.includes(key));
+    .filter((key) => !fieldPlaceholderKeys.includes(key) && !attributePlaceholders.fieldKeys.includes(key));
   if (unusedKeys.length > 0) {
     warnings.push(`以下字段当前未被模板使用：${unusedKeys.slice(0, 6).join('、')}。`);
   }
 
   const unusedImageKeys = slide.visualAssets
     .map((asset) => asset.key)
-    .filter((key) => !imagePlaceholderKeys.includes(key));
+    .filter((key) => !imagePlaceholderKeys.includes(key) && !attributePlaceholders.imageKeys.includes(key));
   if (unusedImageKeys.length > 0) {
     warnings.push(`以下图片槽位当前未被模板使用：${unusedImageKeys.slice(0, 4).join('、')}。`);
   }
@@ -370,6 +436,7 @@ export const captureSlideToPngBlob = async (
   options?: {
     mimeType?: string;
     quality?: number;
+    useOriginalAssets?: boolean;
   },
 ) => {
   const mimeType = options?.mimeType || 'image/png';
@@ -383,6 +450,12 @@ export const captureSlideToPngBlob = async (
   const images = Array.from(clone.querySelectorAll<HTMLImageElement>('img'));
   await Promise.all(
     images.map(async (image) => {
+      const originalSrc = image.getAttribute('data-original-src') || '';
+      const previewSrc = image.getAttribute('data-preview-src') || '';
+      const preferredSrc = options?.useOriginalAssets ? originalSrc || previewSrc : previewSrc || originalSrc;
+      if (preferredSrc) {
+        image.setAttribute('src', preferredSrc);
+      }
       const src = image.getAttribute('src') || '';
       if (!src || src.startsWith('data:')) {
         return;

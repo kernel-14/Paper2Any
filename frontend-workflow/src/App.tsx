@@ -11,6 +11,7 @@ import KnowledgeBasePage from './components/KnowledgeBasePage';
 import { FilesPage } from './components/FilesPage';
 import Paper2DrawioAiPage from './components/Paper2DrawioAiPage';
 import Paper2DrawioPage from './components/paper2drawio';
+import MindMapPage from './components/MindMapPage';
 import Paper2RebuttalPage from './components/Paper2RebuttalPage';
 import Paper2VideoPage from './components/Paper2VideoPage';
 import Paper2PosterPage from './components/Paper2PosterPage';
@@ -18,6 +19,7 @@ import Paper2CitationPage from './components/Paper2CitationPage';
 import { AccountPage } from './components/AccountPage';
 import { useTranslation } from 'react-i18next';
 import { PointsDisplay } from './components/PointsDisplay';
+import { PurchaseEntry } from './components/PurchaseEntry';
 import { UserMenu } from './components/UserMenu';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { Workflow, X, Menu } from 'lucide-react';
@@ -29,6 +31,7 @@ const pageIds = [
   'paper2figure-tech-exp',
   'paper2figure-model-drawio',
   'paper2drawio-ai',
+  'mindmap',
   'paper2ppt',
   'paper2ppt-image',
   'paper2ppt-frontend',
@@ -54,6 +57,7 @@ const pagePaths: Record<ActivePage, string> = {
   'paper2figure-tech-exp': '/paper2figure/tech-exp',
   'paper2figure-model-drawio': '/paper2figure/model-drawio',
   'paper2drawio-ai': '/paper2drawio-ai',
+  'mindmap': '/mindmap',
   'paper2ppt': '/paper2ppt',
   'paper2ppt-image': '/paper2ppt/image',
   'paper2ppt-frontend': '/paper2ppt/frontend',
@@ -215,6 +219,7 @@ function App() {
             <div className="flex items-center gap-3">
               <LanguageSwitcher />
               <PointsDisplay />
+              <PurchaseEntry />
               <UserMenu 
                 onShowFiles={() => setShowFilesModal(true)}
                 onShowAccount={() => setShowAccountModal(true)}
@@ -231,6 +236,7 @@ function App() {
           {activePage === 'paper2figure-tech-exp' && <Paper2GraphTechExpPage />}
           {activePage === 'paper2figure-model-drawio' && <Paper2GraphDrawioPage />}
           {activePage === 'paper2drawio-ai' && <Paper2DrawioAiPage />}
+          {activePage === 'mindmap' && <MindMapPage />}
           {(activePage === 'paper2ppt' || activePage === 'paper2ppt-image') && (
             <Paper2PptPage initialMode="image" />
           )}

@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, FileImage, FileSearch, FileStack, FileText, FolderKanban, GitBranch, LayoutTemplate, MessageSquare, Network, Presentation, Sparkles, Video } from 'lucide-react';
+import { ArrowRight, BookOpen, BrainCircuit, FileImage, FileSearch, FileStack, FileText, FolderKanban, GitBranch, LayoutTemplate, MessageSquare, Network, Presentation, Sparkles, Video } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { featuredHomeCards, homeFeatureSections, HomeFeatureCard, HomeNavigablePage } from '../config/homePageCatalog';
 
@@ -15,6 +15,7 @@ const iconMap = {
   presentation: Presentation,
   video: Video,
   gitBranch: GitBranch,
+  brainCircuit: BrainCircuit,
   network: Network,
   layoutTemplate: LayoutTemplate,
   fileStack: FileStack,

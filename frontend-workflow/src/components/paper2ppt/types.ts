@@ -8,7 +8,9 @@ export interface SlideOutline {
   layout_description: string;
   key_points: string[];
   asset_ref: string | null;
+  asset_ref_preview_path?: string;
   generated_img_path?: string;
+  generated_img_preview_path?: string;
 }
 
 export interface ImageVersion {
@@ -22,7 +24,9 @@ export interface ImageVersion {
 export interface GenerateResult {
   slideId: string;
   beforeImage: string;
+  beforeImagePreview?: string;
   afterImage: string;
+  afterImagePreview?: string;
   status: 'pending' | 'processing' | 'done';
   userPrompt?: string;
   versionHistory: ImageVersion[];
@@ -51,9 +55,12 @@ export interface FrontendVisualAsset {
   key: string;
   label: string;
   src: string;
+  previewSrc?: string;
+  originalSrc?: string;
   alt: string;
   sourceType: FrontendVisualAssetSource;
   storagePath?: string;
+  previewStoragePath?: string;
   prompt?: string;
   style?: string;
 }

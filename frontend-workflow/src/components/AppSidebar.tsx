@@ -10,6 +10,7 @@ import {
   ImagePlus,
   Image,
   Wand2,
+  BrainCircuit,
   // BookOpen,
   FolderOpen,
   Network,
@@ -100,6 +101,13 @@ export const AppSidebar = ({ isOpen, onClose, activePage, onPageChange }: AppSid
       tooltipKey: t('app.navTooltip.paper2figure'),
       icon: Sparkles,
       gradient: 'from-primary-500 to-primary-600'
+    },
+    {
+      id: 'mindmap',
+      labelKey: t('app.nav.mindmap'),
+      tooltipKey: t('app.navTooltip.mindmap'),
+      icon: BrainCircuit,
+      gradient: 'from-cyan-500 to-blue-500'
     },
     {
       id: 'image2drawio',

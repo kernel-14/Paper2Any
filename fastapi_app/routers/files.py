@@ -3,22 +3,33 @@ File management endpoints.
 
 Handles file uploads and history retrieval with JWT authentication.
 """
+import base64
+import hashlib
+import hmac
+import json
 import os
+import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Iterator
 from datetime import datetime
-from fastapi import APIRouter, Depends, UploadFile, File, Form, Request, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse, Response
+from urllib.parse import quote
+
+from fastapi import APIRouter, Body, Depends, UploadFile, File, Form, Request, HTTPException
+from fastapi.responses import StreamingResponse, Response
 import mimetypes
 
-from fastapi_app.dependencies import get_optional_user, AuthUser
-from dataflow_agent.utils import get_project_root
-from fastapi_app.utils import _from_outputs_url
+from fastapi_app.dependencies import AuthUser, get_current_user
+from fastapi_app.config.settings import settings
+from fastapi_app.utils import (
+    _to_outputs_url,
+    ensure_outputs_subpath,
+    get_outputs_root,
+    resolve_outputs_path,
+)
 
 
 router = APIRouter(prefix="/files", tags=["files"])
-PROJECT_ROOT = get_project_root()
-OUTPUTS_ROOT = (PROJECT_ROOT / "outputs").resolve()
+OUTPUTS_ROOT = get_outputs_root()
 FINAL_PAPER2VIDEO_DIRS = {"talking_video", "merge"}
 FIGURE_WORKFLOW_TYPES = {"paper2figure", "paper2fig", "paper2tec", "paper2exp"}
 PDF_WORKFLOW_TYPES = {"paper2ppt", "pdf2ppt", "image2ppt", "ppt2polish", "paper2beamer"}
@@ -26,16 +37,7 @@ DRAWIO_WORKFLOW_TYPES = {"paper2drawio", "paper2drawio_export", "image2drawio"}
 POSTER_WORKFLOW_TYPES = {"paper2poster"}
 REBUTTAL_SUFFIXES = {".md", ".txt", ".json", ".zip"}
 FIGURE_PREFIXES = ("fig_", "technical_route", "exp_")
-
-
-def _to_outputs_url(abs_path: str, request: Request) -> str:
-    """Convert absolute file path to /outputs URL."""
-    try:
-        rel = Path(abs_path).relative_to(PROJECT_ROOT)
-        return f"{request.url.scheme}://{request.url.netloc}/{rel.as_posix()}"
-    except ValueError:
-        return abs_path
-
+FILE_ACCESS_TOKEN_VERSION = 1
 
 def _iter_file_range(path: Path, start: int, end: int, chunk_size: int = 1024 * 1024) -> Iterator[bytes]:
     with open(path, "rb") as f:
@@ -51,6 +53,18 @@ def _iter_file_range(path: Path, start: int, end: int, chunk_size: int = 1024 * 
 
 def _normalize_user_identifier(value: Optional[str]) -> str:
     return (value or "").strip()
+
+
+def _dedupe_paths(paths: List[Path]) -> List[Path]:
+    seen: set[str] = set()
+    ordered: List[Path] = []
+    for path in paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        ordered.append(path)
+    return ordered
 
 
 def _resolve_user_dir_candidates(user: Optional[AuthUser], email: Optional[str]) -> List[str]:
@@ -84,6 +98,41 @@ def _resolve_user_dir_candidates(user: Optional[AuthUser], email: Optional[str])
 def _resolve_primary_user_dir(user: Optional[AuthUser], email: Optional[str]) -> str:
     candidates = _resolve_user_dir_candidates(user, email)
     return candidates[0] if candidates else "default"
+
+
+def _allowed_user_output_roots(user: AuthUser) -> List[Path]:
+    outputs_root = OUTPUTS_ROOT
+    roots = [
+        (outputs_root / candidate).resolve()
+        for candidate in _resolve_user_dir_candidates(user, None)
+        if candidate and candidate != "default"
+    ]
+    email = _normalize_user_identifier(user.email)
+    if email:
+        roots.extend(
+            [
+                (outputs_root / "kb_data" / email).resolve(),
+                (outputs_root / "kb_outputs" / email).resolve(),
+                (outputs_root / "kb_exports" / email).resolve(),
+            ]
+        )
+    return _dedupe_paths(roots)
+
+
+def _ensure_user_owned_output_path(path_or_url: str, user: AuthUser) -> Path:
+    resolved = resolve_outputs_path(
+        path_or_url,
+        must_exist=True,
+        allow_files=True,
+        allow_dirs=False,
+    )
+    for root in _allowed_user_output_roots(user):
+        try:
+            resolved.relative_to(root)
+            return resolved
+        except ValueError:
+            continue
+    raise HTTPException(status_code=403, detail="Path does not belong to the authenticated user")
 
 
 def _infer_workflow_type(base_dir: Path, path: Path) -> tuple[str, tuple[str, ...]]:
@@ -145,19 +194,96 @@ def _should_include_history_file(path: Path, workflow_type: str, rel_parts: tupl
     return False
 
 
+def _get_file_access_secret() -> bytes:
+    secret = (settings.FILE_ACCESS_TOKEN_SECRET or os.getenv("BACKEND_API_KEY", "")).strip()
+    if not secret:
+        raise HTTPException(status_code=500, detail="File access token secret is not configured")
+    return secret.encode("utf-8")
+
+
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def _build_file_access_token(path: Path, *, expires_at: int) -> str:
+    rel_path = path.resolve().relative_to(OUTPUTS_ROOT).as_posix()
+    payload = {
+        "v": FILE_ACCESS_TOKEN_VERSION,
+        "rel": rel_path,
+        "exp": int(expires_at),
+    }
+    payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    signature = hmac.new(_get_file_access_secret(), payload_bytes, hashlib.sha256).digest()
+    return f"{_b64url_encode(payload_bytes)}.{_b64url_encode(signature)}"
+
+
+def _resolve_file_access_token(token: str) -> Path:
+    raw_token = (token or "").strip()
+    if not raw_token:
+        raise HTTPException(status_code=401, detail="Missing file access token")
+
+    try:
+        payload_part, signature_part = raw_token.split(".", 1)
+        payload_bytes = _b64url_decode(payload_part)
+        provided_signature = _b64url_decode(signature_part)
+    except Exception as exc:
+        raise HTTPException(status_code=403, detail="Invalid file access token") from exc
+
+    expected_signature = hmac.new(_get_file_access_secret(), payload_bytes, hashlib.sha256).digest()
+    if not hmac.compare_digest(provided_signature, expected_signature):
+        raise HTTPException(status_code=403, detail="Invalid file access token")
+
+    try:
+        payload = json.loads(payload_bytes.decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=403, detail="Invalid file access token") from exc
+
+    if int(payload.get("v") or 0) != FILE_ACCESS_TOKEN_VERSION:
+        raise HTTPException(status_code=403, detail="Unsupported file access token")
+
+    expires_at = int(payload.get("exp") or 0)
+    if expires_at <= int(time.time()):
+        raise HTTPException(status_code=401, detail="File access token expired")
+
+    rel_path = str(payload.get("rel") or "").strip()
+    if not rel_path:
+        raise HTTPException(status_code=403, detail="Invalid file access token")
+
+    return ensure_outputs_subpath(
+        OUTPUTS_ROOT / rel_path,
+        must_exist=True,
+        allow_files=True,
+        allow_dirs=False,
+    )
+
+
+@router.post("/access-url")
+async def create_file_access_url(
+    path: str = Body(..., embed=True),
+    user: AuthUser = Depends(get_current_user),
+) -> Dict[str, Any]:
+    asset_path = _ensure_user_owned_output_path(path, user)
+    ttl_seconds = max(30, int(settings.FILE_ACCESS_URL_TTL_SECONDS or 900))
+    expires_at = int(time.time()) + ttl_seconds
+    token = _build_file_access_token(asset_path, expires_at=expires_at)
+    return {
+        "success": True,
+        "access_url": f"/api/v1/files/stream?token={quote(token)}",
+        "expires_at": datetime.fromtimestamp(expires_at).isoformat(),
+    }
+
+
 @router.get("/stream")
-async def stream_file(url: str, request: Request):
+async def stream_file(token: str, request: Request):
     """
     Stream a file with HTTP Range support (for large audio/video playback).
     """
-    abs_path = Path(_from_outputs_url(url)).resolve()
-    try:
-        abs_path.relative_to(OUTPUTS_ROOT)
-    except Exception:
-        raise HTTPException(status_code=403, detail="Invalid file path")
-
-    if not abs_path.exists() or not abs_path.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
+    abs_path = _resolve_file_access_token(token)
 
     file_size = abs_path.stat().st_size
     range_header = request.headers.get("range")
@@ -209,8 +335,7 @@ async def stream_file(url: str, request: Request):
 async def upload_file(
     file: UploadFile = File(...),
     workflow_type: str = Form(...),
-    email: Optional[str] = Form(None),
-    user: Optional[AuthUser] = Depends(get_optional_user),
+    user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
     Upload a file to local storage.
@@ -218,8 +343,7 @@ async def upload_file(
     Args:
         file: File to upload
         workflow_type: Type of workflow (e.g., 'paper2ppt', 'ppt2polish')
-        email: User email (fallback when JWT not available)
-        user: Authenticated user (from JWT token, optional)
+        user: Authenticated user
         
     Returns:
         File metadata including download URL
@@ -227,12 +351,12 @@ async def upload_file(
     try:
         # Prefer user.id as the canonical output directory.
         # Older runs may still exist under email, and history scans both.
-        user_dir = _resolve_primary_user_dir(user, email)
+        user_dir = _resolve_primary_user_dir(user, None)
         
         timestamp = int(datetime.now().timestamp() * 1000)
         
         # Create directory structure: outputs/{user_dir}/{workflow_type}/{timestamp}/
-        save_dir = PROJECT_ROOT / "outputs" / user_dir / workflow_type / str(timestamp)
+        save_dir = OUTPUTS_ROOT / user_dir / workflow_type / str(timestamp)
         save_dir.mkdir(parents=True, exist_ok=True)
         
         # Save file
@@ -259,24 +383,22 @@ async def upload_file(
 @router.get("/history")
 async def get_file_history(
     request: Request,
-    email: Optional[str] = None,
-    user: Optional[AuthUser] = Depends(get_optional_user),
+    user: AuthUser = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """
     Get file history for authenticated user.
     
     Args:
         request: FastAPI request object (for URL generation)
-        email: User email (fallback when JWT not available)
-        user: Authenticated user (from JWT token, optional)
+        user: Authenticated user
         
     Returns:
         List of file records
     """
     try:
         base_dirs = [
-            PROJECT_ROOT / "outputs" / user_dir
-            for user_dir in _resolve_user_dir_candidates(user, email)
+            OUTPUTS_ROOT / user_dir
+            for user_dir in _resolve_user_dir_candidates(user, None)
         ]
         existing_base_dirs = [p for p in base_dirs if p.exists()]
 

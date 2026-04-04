@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  AlertCircle,
   CheckCircle2,
   Coins,
   Copy,
+  ExternalLink,
   History,
   Key,
   Loader2,
@@ -12,7 +12,7 @@ import {
   Users,
 } from "lucide-react";
 
-import { API_URL_OPTIONS, DEFAULT_LLM_API_URL } from "../config/api";
+import { API_URL_OPTIONS, DEFAULT_LLM_API_URL, getPurchaseUrl } from "../config/api";
 import { backendFetch } from "../services/backendClient";
 import { getApiSettings, saveApiSettings } from "../services/apiSettingsService";
 import { fetchRuntimeConfig, getRuntimeConfigSync, RuntimeConfig } from "../services/runtimeConfigService";
@@ -50,6 +50,29 @@ interface AccountProfileResponse {
   points_ledger: LedgerRecord[];
 }
 
+function formatLedgerReason(reason: string): string {
+  if (reason === "signup_bonus") {
+    return "注册赠送";
+  }
+  if (reason === "daily_grant") {
+    return "每日补点";
+  }
+  if (reason === "referral_inviter") {
+    return "邀请奖励";
+  }
+  if (reason === "referral_invitee") {
+    return "被邀请奖励";
+  }
+  if (reason.startsWith("redeem_code_")) {
+    const points = reason.split("_").pop() || "";
+    return `兑换码充值 (${points} 点)`;
+  }
+  if (reason.startsWith("workflow_")) {
+    return `工作流消耗: ${reason.replace(/^workflow_/, "")}`;
+  }
+  return reason;
+}
+
 export function AccountPage() {
   const { user, claimInviteCode, error: authError, refreshQuota } = useAuthStore();
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig>(getRuntimeConfigSync());
@@ -58,6 +81,10 @@ export function AccountPage() {
   const [inviteCodeInput, setInviteCodeInput] = useState("");
   const [claiming, setClaiming] = useState(false);
   const [claimSuccess, setClaimSuccess] = useState(false);
+  const [redeemCodeInput, setRedeemCodeInput] = useState("");
+  const [redeeming, setRedeeming] = useState(false);
+  const [redeemSuccessMessage, setRedeemSuccessMessage] = useState("");
+  const [redeemErrorMessage, setRedeemErrorMessage] = useState("");
   const [copied, setCopied] = useState(false);
 
   const [apiUrl, setApiUrl] = useState(DEFAULT_LLM_API_URL);
@@ -68,6 +95,8 @@ export function AccountPage() {
   const showApiSettings = runtimeConfig.user_api_config_required;
   const pointsBalance = profileData?.points?.balance ?? 0;
   const displayModeText = runtimeConfig.billing_mode === "free" ? "免费模式" : "付费模式";
+  const purchaseUrl = runtimeConfig.points_purchase_url?.trim()
+    || getPurchaseUrl(runtimeConfig.managed_api_url || DEFAULT_LLM_API_URL);
 
   const inviteRewardText = useMemo(() => {
     if (runtimeConfig.referral_invitee_points > 0) {
@@ -75,6 +104,19 @@ export function AccountPage() {
     }
     return `邀请人 +${runtimeConfig.referral_inviter_points}`;
   }, [runtimeConfig.referral_inviter_points, runtimeConfig.referral_invitee_points]);
+
+  const fetchAccountProfileData = async (): Promise<AccountProfileResponse | null> => {
+    if (!user) {
+      return null;
+    }
+
+    const response = await backendFetch("/api/v1/account/profile");
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => null);
+      throw new Error(errorPayload?.detail || `账户信息获取失败 (${response.status})`);
+    }
+    return (await response.json()) as AccountProfileResponse;
+  };
 
   useEffect(() => {
     fetchRuntimeConfig()
@@ -94,19 +136,14 @@ export function AccountPage() {
     let cancelled = false;
 
     const loadAccountProfile = async () => {
-      if (!user || user.is_anonymous) {
+      if (!user) {
         setLoading(false);
         return;
       }
 
       try {
         setLoading(true);
-        const response = await backendFetch("/api/v1/account/profile");
-        if (!response.ok) {
-          const errorPayload = await response.json().catch(() => null);
-          throw new Error(errorPayload?.detail || `账户信息获取失败 (${response.status})`);
-        }
-        const data = (await response.json()) as AccountProfileResponse;
+        const data = await fetchAccountProfileData();
         if (!cancelled) {
           setProfileData(data);
         }
@@ -127,7 +164,7 @@ export function AccountPage() {
     return () => {
       cancelled = true;
     };
-  }, [user?.id, user?.is_anonymous]);
+  }, [user?.id]);
 
   const handleClaimInvite = async () => {
     if (!inviteCodeInput.trim()) {
@@ -142,15 +179,53 @@ export function AccountPage() {
       setInviteCodeInput("");
       await refreshQuota();
 
-      const response = await backendFetch("/api/v1/account/profile");
-      if (response.ok) {
-        const data = (await response.json()) as AccountProfileResponse;
+      const data = await fetchAccountProfileData().catch(() => null);
+      if (data) {
         setProfileData(data);
       }
     } catch (err) {
       console.error("[AccountPage] Failed to claim invite code:", err);
     } finally {
       setClaiming(false);
+    }
+  };
+
+  const handleRedeemPoints = async () => {
+    const normalizedCode = redeemCodeInput.trim();
+    if (!normalizedCode) {
+      return;
+    }
+
+    setRedeeming(true);
+    setRedeemSuccessMessage("");
+    setRedeemErrorMessage("");
+
+    try {
+      const response = await backendFetch("/api/v1/account/points/redeem", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ redeem_code: normalizedCode }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.detail || `兑换失败 (${response.status})`);
+      }
+
+      setRedeemCodeInput("");
+      setRedeemSuccessMessage(`兑换成功，已到账 ${payload?.points_added ?? 0} 点`);
+      await refreshQuota();
+
+      const data = await fetchAccountProfileData().catch(() => null);
+      if (data) {
+        setProfileData(data);
+      }
+    } catch (err) {
+      console.error("[AccountPage] Failed to redeem points code:", err);
+      setRedeemErrorMessage(err instanceof Error ? err.message : "兑换失败，请稍后重试");
+    } finally {
+      setRedeeming(false);
     }
   };
 
@@ -182,25 +257,6 @@ export function AccountPage() {
     return (
       <div className="w-full h-full flex items-center justify-center">
         <p className="text-gray-400">请先登录</p>
-      </div>
-    );
-  }
-
-  if (user.is_anonymous) {
-    return (
-      <div className="w-full h-full overflow-auto px-6 py-8 bg-gradient-to-br from-[#050512] via-[#0a0a1a] to-[#050512]">
-        <div className="max-w-3xl mx-auto rounded-2xl border border-white/10 bg-white/5 p-6">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="text-yellow-400 mt-1" size={18} />
-            <div>
-              <h2 className="text-xl font-semibold text-white mb-2">匿名体验账户</h2>
-              <p className="text-sm text-gray-300">
-                当前账号为匿名体验模式，右上角展示的是临时试用次数。
-                注册或登录正式账号后，才能查看邀请码、积分流水和邀请奖励。
-              </p>
-            </div>
-          </div>
-        </div>
       </div>
     );
   }
@@ -247,7 +303,7 @@ export function AccountPage() {
                 </div>
                 <p className="text-sm text-gray-400">
                   {runtimeConfig.billing_mode === "free"
-                    ? `每日低于 ${runtimeConfig.daily_grant_balance_cap} 时自动补 ${runtimeConfig.daily_grant_points} 点。`
+                    ? `每日最多补 ${runtimeConfig.daily_grant_points} 点，余额上限 ${runtimeConfig.daily_grant_balance_cap} 点。`
                     : "当前模式不扣平台点数，主要依赖用户自备 API。"}
                 </p>
               </div>
@@ -271,7 +327,54 @@ export function AccountPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {(runtimeConfig.billing_mode === "free" || runtimeConfig.points_redeem_enabled) && (
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
+                  <div className="flex items-center gap-2 text-white">
+                    <Coins size={18} className="text-amber-300" />
+                    <span className="font-medium">点数兑换</span>
+                  </div>
+                  <p className="text-sm text-gray-400">
+                    点数不足时，可先前往购买页获取兑换码，再回到这里兑换加点。
+                  </p>
+                  <div className="space-y-3">
+                    <input
+                      type="text"
+                      value={redeemCodeInput}
+                      onChange={(e) => setRedeemCodeInput(e.target.value)}
+                      placeholder="输入点数兑换码"
+                      className="w-full px-4 py-3 bg-black/30 border border-white/10 rounded-lg text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+                    />
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <button
+                        onClick={handleRedeemPoints}
+                        disabled={redeeming || !redeemCodeInput.trim()}
+                        className="flex-1 px-5 py-3 rounded-lg bg-amber-600/80 hover:bg-amber-600 disabled:opacity-50 text-white text-sm font-medium flex items-center justify-center gap-2"
+                      >
+                        {redeeming ? <Loader2 size={16} className="animate-spin" /> : <Ticket size={16} />}
+                        立即兑换
+                      </button>
+                      {runtimeConfig.billing_mode === "free" && purchaseUrl && (
+                        <a
+                          href={purchaseUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex-1 px-5 py-3 rounded-lg border border-amber-400/20 bg-amber-500/10 hover:bg-amber-500/15 text-amber-100 text-sm font-medium flex items-center justify-center gap-2 transition-colors"
+                        >
+                          <ExternalLink size={16} />
+                          前往发卡平台
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                  {(redeemSuccessMessage || redeemErrorMessage) && (
+                    <div className={`rounded-lg px-4 py-3 text-sm ${redeemSuccessMessage ? "bg-green-500/10 border border-green-500/20 text-green-300" : "bg-red-500/10 border border-red-500/20 text-red-300"}`}>
+                      {redeemSuccessMessage || redeemErrorMessage}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
                 <div className="flex items-center gap-2 text-white">
                   <Users size={18} className="text-green-400" />
@@ -353,7 +456,7 @@ export function AccountPage() {
                   </>
                 ) : (
                   <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/10 px-4 py-4 text-sm text-cyan-100">
-                    后端托管模式已开启。前端页面中的业务模型调用将自动使用服务器 `.env` 中的配置，不再依赖当前浏览器保存的 API Key。
+                    后端托管模型已开启。功能调用会消耗点数，无需手动填写 API URL 或 API Key；若点数不足，可前往购买页获取兑换码，再到账户页兑换加点。
                   </div>
                 )}
               </div>
@@ -389,7 +492,7 @@ export function AccountPage() {
                     {profileData.points_ledger.map((record) => (
                       <div key={record.id} className="rounded-lg border border-white/10 bg-black/20 px-4 py-3">
                         <div className="flex items-center justify-between gap-3">
-                          <span className="text-sm text-white">{record.reason}</span>
+                          <span className="text-sm text-white">{formatLedgerReason(record.reason)}</span>
                           <span className={`text-sm font-medium ${record.points >= 0 ? "text-green-300" : "text-red-300"}`}>
                             {record.points >= 0 ? `+${record.points}` : record.points}
                           </span>

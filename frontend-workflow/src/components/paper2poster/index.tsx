@@ -1,12 +1,13 @@
 import React, { useState, useEffect, ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { API_KEY } from '../../config/api';
 import { checkQuota, recordUsage } from '../../services/quotaService';
 import { verifyLlmConnection } from '../../services/llmService';
 import { useAuthStore } from '../../stores/authStore';
 import { getApiSettings, saveApiSettings } from '../../services/apiSettingsService';
 import { uploadAndSaveFile } from '../../services/fileService';
+import { backendFetch } from '../../services/backendClient';
 import { useRuntimeBilling } from '../../hooks/useRuntimeBilling';
+import { buildQuotaExhaustedMessage, resolvePointsPurchaseUrl } from '../../utils/pointsMessaging';
 
 import { Step, PosterConfig, GenerateResult } from './types';
 import { MAX_FILE_SIZE, STORAGE_KEY, DEFAULT_CONFIG } from './constants';
@@ -19,7 +20,10 @@ import CompleteStep from './CompleteStep';
 
 const Paper2PosterPage = () => {
   const { user, refreshQuota } = useAuthStore();
-  const { userApiConfigRequired } = useRuntimeBilling();
+  const { userApiConfigRequired, runtimeConfig } = useRuntimeBilling();
+  const purchaseUrl = runtimeConfig.billing_mode === 'free'
+    ? resolvePointsPurchaseUrl(runtimeConfig)
+    : '';
 
   // Step 状态
   const [currentStep, setCurrentStep] = useState<Step>('upload');
@@ -224,9 +228,7 @@ const Paper2PosterPage = () => {
     // Check quota
     const quota = await checkQuota(user?.id || null, user?.is_anonymous || false);
     if (quota.remaining <= 0) {
-      setError(quota.isAuthenticated
-        ? '今日配额已用完（10次/天），请明天再试'
-        : '今日配额已用完（5次/天），登录后可获得更多配额');
+      setError(quota.isAuthenticated ? buildQuotaExhaustedMessage(purchaseUrl) : '请先登录后继续使用');
       return;
     }
 
@@ -290,9 +292,8 @@ const Paper2PosterPage = () => {
         formData.append('aff_logo_file', affLogoFile);
       }
 
-      const res = await fetch('/api/v1/paper2poster/generate', {
+      const res = await backendFetch('/api/v1/paper2poster/generate', {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY },
         body: formData,
       });
 

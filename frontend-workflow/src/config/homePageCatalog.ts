@@ -2,6 +2,7 @@ export type HomeNavigablePage =
   | 'paper2figure-tech-exp'
   | 'paper2figure-model-drawio'
   | 'paper2drawio-ai'
+  | 'mindmap'
   | 'paper2ppt'
   | 'paper2ppt-image'
   | 'paper2ppt-frontend'
@@ -24,6 +25,7 @@ export type HomeIconKey =
   | 'presentation'
   | 'video'
   | 'gitBranch'
+  | 'brainCircuit'
   | 'network'
   | 'layoutTemplate'
   | 'fileStack'
@@ -134,6 +136,18 @@ export const homeFeatureSections: HomeFeatureSection[] = [
         preview: {
           kind: 'gif',
           src: '/home-previews/paper2drawio-ai.gif',
+        },
+      },
+      {
+        page: 'mindmap',
+        titleKey: 'app.home.cards.mindmap.title',
+        descriptionKey: 'app.home.cards.mindmap.description',
+        badgeKey: 'app.home.cards.mindmap.badge',
+        icon: 'brainCircuit',
+        accent: 'from-cyan-500/75 via-sky-400/65 to-indigo-300/60',
+        preview: {
+          kind: 'image',
+          src: '/home-previews/mindmap-home.png',
         },
       },
       {

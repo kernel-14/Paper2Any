@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -17,10 +20,12 @@ from fastapi_app.schemas import (
     PPTGenerationRequest,
 )
 from dataflow_agent.utils.version_manager import ImageVersionManager
-from fastapi_app.utils import _to_outputs_url
+from fastapi_app.services.billing_service import BillingService
+from fastapi_app.utils import _to_outputs_url, resolve_outputs_path
 
 # 注意：prefix 由 main.py 统一加 "/api/paper2ppt"
 router = APIRouter(tags=["paper2ppt"])
+_SYNC_SUBMISSION_WINDOW_SECONDS = 20
 
 
 def get_service() -> Paper2PPTService:
@@ -39,6 +44,167 @@ def get_frontend_service() -> Paper2PPTFrontendService:
     from fastapi_app.services.paper2ppt_frontend_service import Paper2PPTFrontendService
 
     return Paper2PPTFrontendService()
+
+
+def _is_truthy(raw: Any) -> bool:
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _pagecontent_count(raw: Any) -> int:
+    text = str(raw or "").strip()
+    if not text:
+        return 0
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return 0
+    return len(payload) if isinstance(payload, list) else 0
+
+
+def _parse_page_index_list(raw: Any, *, max_count: int | None = None) -> list[int]:
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+
+    max_index = max_count - 1 if max_count is not None and max_count > 0 else None
+    indices: set[int] = set()
+    for item in payload:
+        try:
+            value = int(str(item).strip())
+        except (TypeError, ValueError):
+            continue
+        if value < 0:
+            continue
+        if max_index is not None and value > max_index:
+            continue
+        indices.add(value)
+    return sorted(indices)
+
+
+def _build_submission_key(payload: Dict[str, Any]) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _build_authenticated_event_key(
+    request: Request,
+    workflow_type: str,
+    submission_key: str,
+) -> Optional[str]:
+    user = getattr(request.state, "auth_user", None)
+    if not user:
+        return None
+    user_id = str(getattr(user, "id", "") or "").strip()
+    if not user_id:
+        return None
+    time_bucket = int(time.time() // _SYNC_SUBMISSION_WINDOW_SECONDS)
+    return f"workflow_{workflow_type}_{user_id}_{time_bucket}_{submission_key}"
+
+
+def _consume_workflow_before_execute(
+    request: Request,
+    *,
+    workflow_type: str,
+    amount: int,
+    submission_payload: Dict[str, Any],
+) -> None:
+    submission_key = _build_submission_key(submission_payload)
+    event_key = _build_authenticated_event_key(request, workflow_type, submission_key)
+    BillingService().consume_workflow(
+        workflow_type=workflow_type,
+        amount=max(1, int(amount)),
+        user=getattr(request.state, "auth_user", None),
+        guest_id=getattr(request.state, "guest_id", None),
+        event_key=event_key,
+    )
+
+
+def _consume_paper2ppt_generate_charge(request: Request, req: PPTGenerationRequest) -> None:
+    if _is_truthy(req.all_edited_down):
+        return
+
+    get_down = _is_truthy(req.get_down)
+    regenerate_from_outline = _is_truthy(req.regenerate_from_outline)
+    if get_down:
+        if req.page_id is None:
+            return
+        if not regenerate_from_outline and not str(req.edit_prompt or "").strip():
+            return
+        amount = 1
+    else:
+        total_pages = _pagecontent_count(req.pagecontent)
+        skip_count = len(_parse_page_index_list(req.skip_pages, max_count=total_pages))
+        amount = max(0, total_pages - skip_count)
+        if amount <= 0:
+            return
+
+    payload = {
+        "path": "/api/v1/paper2ppt/generate",
+        "result_path": str(req.result_path or "").strip(),
+        "pagecontent": str(req.pagecontent or "").strip(),
+        "get_down": get_down,
+        "all_edited_down": _is_truthy(req.all_edited_down),
+        "page_id": req.page_id,
+        "edit_prompt": str(req.edit_prompt or "").strip(),
+        "regenerate_from_outline": regenerate_from_outline,
+        "style": str(req.style or "").strip(),
+        "model": str(req.model or "").strip(),
+        "language": str(req.language or "").strip(),
+        "aspect_ratio": str(req.aspect_ratio or "").strip(),
+        "img_gen_model_name": str(req.img_gen_model_name or "").strip(),
+        "image_resolution": str(req.image_resolution or "").strip(),
+        "skip_pages": _parse_page_index_list(req.skip_pages),
+    }
+    _consume_workflow_before_execute(
+        request,
+        workflow_type="paper2ppt",
+        amount=amount,
+        submission_payload=payload,
+    )
+
+
+def _consume_paper2ppt_frontend_charge(request: Request, req: FrontendPPTGenerationRequest) -> None:
+    pagecontent_count = _pagecontent_count(req.pagecontent)
+    if pagecontent_count <= 0:
+        return
+
+    if req.page_id is not None:
+        amount = 1
+    else:
+        skip_count = len(_parse_page_index_list(req.skip_slides, max_count=pagecontent_count))
+        pages_to_generate = max(0, pagecontent_count - skip_count)
+        per_page = 2 if bool(req.include_images) else 1
+        amount = pages_to_generate * per_page
+        if amount <= 0:
+            return
+
+    payload = {
+        "path": "/api/v1/paper2ppt/frontend/generate",
+        "result_path": str(req.result_path or "").strip(),
+        "pagecontent": str(req.pagecontent or "").strip(),
+        "page_id": req.page_id,
+        "edit_prompt": str(req.edit_prompt or "").strip(),
+        "current_slide": str(req.current_slide or "").strip(),
+        "style": str(req.style or "").strip(),
+        "model": str(req.model or "").strip(),
+        "language": str(req.language or "").strip(),
+        "include_images": bool(req.include_images),
+        "image_style": str(req.image_style or "").strip(),
+        "image_model": str(req.image_model or "").strip(),
+        "skip_slides": _parse_page_index_list(req.skip_slides),
+    }
+    _consume_workflow_before_execute(
+        request,
+        workflow_type="paper2ppt",
+        amount=amount,
+        submission_payload=payload,
+    )
 
 
 @router.post(
@@ -131,6 +297,8 @@ async def paper2ppt_ppt_json(
     page_id: Optional[int] = Form(None),
     # 页面编辑提示词（get_down=true 时必传）
     edit_prompt: Optional[str] = Form(None),
+    regenerate_from_outline: str = Form("false"),
+    skip_pages: Optional[str] = Form(None),
     service: Paper2PPTService = Depends(get_service),
 ):
     """
@@ -155,8 +323,12 @@ async def paper2ppt_ppt_json(
         pagecontent=pagecontent,
         page_id=page_id,
         edit_prompt=edit_prompt,
+        regenerate_from_outline=regenerate_from_outline,
         image_resolution=image_resolution,
+        skip_pages=skip_pages,
     )
+
+    _consume_paper2ppt_generate_charge(request, req)
 
     data = await service.generate_ppt(
         req=req,
@@ -172,6 +344,7 @@ async def paper2ppt_ppt_json(
     responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
 )
 async def paper2ppt_generate_task(
+    request: Request,
     img_gen_model_name: str = Form(...),
     chat_api_url: Optional[str] = Form(None),
     api_key: Optional[str] = Form(None),
@@ -189,6 +362,8 @@ async def paper2ppt_generate_task(
     pagecontent: Optional[str] = Form(None),
     page_id: Optional[int] = Form(None),
     edit_prompt: Optional[str] = Form(None),
+    regenerate_from_outline: str = Form("false"),
+    skip_pages: Optional[str] = Form(None),
     task_service: Paper2PPTTaskService = Depends(get_task_service),
 ):
     req = PPTGenerationRequest(
@@ -207,9 +382,11 @@ async def paper2ppt_generate_task(
         pagecontent=pagecontent,
         page_id=page_id,
         edit_prompt=edit_prompt,
+        regenerate_from_outline=regenerate_from_outline,
         image_resolution=image_resolution,
+        skip_pages=skip_pages,
     )
-    return await task_service.submit_generate_task(req=req, reference_img=reference_img)
+    return await task_service.submit_generate_task(req=req, reference_img=reference_img, request=request)
 
 
 @router.get(
@@ -281,6 +458,7 @@ async def paper2ppt_frontend_generate(
     page_id: Optional[int] = Form(None),
     edit_prompt: Optional[str] = Form(None),
     current_slide: Optional[str] = Form(None),
+    skip_slides: Optional[str] = Form(None),
     service: Paper2PPTFrontendService = Depends(get_frontend_service),
 ):
     req = FrontendPPTGenerationRequest(
@@ -299,7 +477,9 @@ async def paper2ppt_frontend_generate(
         page_id=page_id,
         edit_prompt=edit_prompt,
         current_slide=current_slide,
+        skip_slides=skip_slides,
     )
+    _consume_paper2ppt_frontend_charge(request, req)
     return await service.generate_slides(req=req, request=request)
 
 
@@ -391,7 +571,7 @@ async def get_version_history(
     try:
         # 解码 result_path
         decoded_path = base64.b64decode(encoded_path).decode('utf-8')
-        img_dir = Path(decoded_path) / "ppt_pages"
+        img_dir = resolve_outputs_path(decoded_path, must_exist=True, allow_dirs=True) / "ppt_pages"
 
         if not img_dir.exists():
             raise HTTPException(status_code=404, detail="图片目录不存在")
@@ -434,7 +614,7 @@ async def revert_to_version(
         包含当前图片URL和恢复版本号的字典
     """
     try:
-        img_dir = Path(result_path) / "ppt_pages"
+        img_dir = resolve_outputs_path(result_path, must_exist=True, allow_dirs=True) / "ppt_pages"
 
         if not img_dir.exists():
             raise HTTPException(status_code=404, detail="图片目录不存在")

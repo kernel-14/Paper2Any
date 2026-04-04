@@ -20,12 +20,21 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from script.cli_env import load_project_env
 from dataflow_agent.logger import get_logger
 from dataflow_agent.state import Paper2FigureState, Paper2FigureRequest
 from dataflow_agent.workflow import run_workflow
 from dataflow_agent.utils import get_project_root
 
+load_project_env()
+
 log = get_logger(__name__)
+
+
+def _state_get(state, key: str, default=None):
+    if isinstance(state, dict):
+        return state.get(key, default)
+    return getattr(state, key, default)
 
 
 def parse_args():
@@ -243,7 +252,7 @@ async def run_paper2ppt_workflow(args, input_content: str, input_type: str, outp
     state = await run_workflow(workflow_name_step1, state)
 
     log.info("Step 1 completed: Page content generated")
-    pagecontent_len = len(getattr(state, "pagecontent", []) or [])
+    pagecontent_len = len(_state_get(state, "pagecontent", []) or [])
     log.info("Generated %s pages", pagecontent_len)
 
     # Step 2: Generate PPT from page content
@@ -266,17 +275,17 @@ def print_results(final_state: Paper2FigureState, output_dir: Path):
     log.info("Output Directory: %s", output_dir)
 
     # Check for PPT PDF file
-    ppt_pdf_path = getattr(final_state, "ppt_pdf_path", None)
+    ppt_pdf_path = _state_get(final_state, "ppt_pdf_path", None)
     if ppt_pdf_path and os.path.exists(ppt_pdf_path):
         log.info("PPT PDF File: %s", ppt_pdf_path)
 
     # Check for editable PPTX file
-    ppt_pptx_path = getattr(final_state, "ppt_pptx_path", None)
+    ppt_pptx_path = _state_get(final_state, "ppt_pptx_path", None)
     if ppt_pptx_path and os.path.exists(ppt_pptx_path):
         log.info("PPT PPTX File: %s", ppt_pptx_path)
 
     # Check for page content JSON
-    pagecontent = getattr(final_state, "pagecontent", None)
+    pagecontent = _state_get(final_state, "pagecontent", None)
     if pagecontent:
         log.info("Page Content: %s pages generated", len(pagecontent))
 
