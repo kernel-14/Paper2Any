@@ -61,6 +61,32 @@ def _pagecontent_count(raw: Any) -> int:
     return len(payload) if isinstance(payload, list) else 0
 
 
+def _parse_page_index_list(raw: Any, *, max_count: int | None = None) -> list[int]:
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+
+    max_index = max_count - 1 if max_count is not None and max_count > 0 else None
+    indices: set[int] = set()
+    for item in payload:
+        try:
+            value = int(str(item).strip())
+        except (TypeError, ValueError):
+            continue
+        if value < 0:
+            continue
+        if max_index is not None and value > max_index:
+            continue
+        indices.add(value)
+    return sorted(indices)
+
+
 def _build_submission_key(payload: Dict[str, Any]) -> str:
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -104,12 +130,17 @@ def _consume_paper2ppt_generate_charge(request: Request, req: PPTGenerationReque
         return
 
     get_down = _is_truthy(req.get_down)
+    regenerate_from_outline = _is_truthy(req.regenerate_from_outline)
     if get_down:
-        if req.page_id is None or not str(req.edit_prompt or "").strip():
+        if req.page_id is None:
+            return
+        if not regenerate_from_outline and not str(req.edit_prompt or "").strip():
             return
         amount = 1
     else:
-        amount = _pagecontent_count(req.pagecontent)
+        total_pages = _pagecontent_count(req.pagecontent)
+        skip_count = len(_parse_page_index_list(req.skip_pages, max_count=total_pages))
+        amount = max(0, total_pages - skip_count)
         if amount <= 0:
             return
 
@@ -121,12 +152,14 @@ def _consume_paper2ppt_generate_charge(request: Request, req: PPTGenerationReque
         "all_edited_down": _is_truthy(req.all_edited_down),
         "page_id": req.page_id,
         "edit_prompt": str(req.edit_prompt or "").strip(),
+        "regenerate_from_outline": regenerate_from_outline,
         "style": str(req.style or "").strip(),
         "model": str(req.model or "").strip(),
         "language": str(req.language or "").strip(),
         "aspect_ratio": str(req.aspect_ratio or "").strip(),
         "img_gen_model_name": str(req.img_gen_model_name or "").strip(),
         "image_resolution": str(req.image_resolution or "").strip(),
+        "skip_pages": _parse_page_index_list(req.skip_pages),
     }
     _consume_workflow_before_execute(
         request,
@@ -144,8 +177,12 @@ def _consume_paper2ppt_frontend_charge(request: Request, req: FrontendPPTGenerat
     if req.page_id is not None:
         amount = 1
     else:
+        skip_count = len(_parse_page_index_list(req.skip_slides, max_count=pagecontent_count))
+        pages_to_generate = max(0, pagecontent_count - skip_count)
         per_page = 2 if bool(req.include_images) else 1
-        amount = max(1, pagecontent_count * per_page)
+        amount = pages_to_generate * per_page
+        if amount <= 0:
+            return
 
     payload = {
         "path": "/api/v1/paper2ppt/frontend/generate",
@@ -160,6 +197,7 @@ def _consume_paper2ppt_frontend_charge(request: Request, req: FrontendPPTGenerat
         "include_images": bool(req.include_images),
         "image_style": str(req.image_style or "").strip(),
         "image_model": str(req.image_model or "").strip(),
+        "skip_slides": _parse_page_index_list(req.skip_slides),
     }
     _consume_workflow_before_execute(
         request,
@@ -259,6 +297,8 @@ async def paper2ppt_ppt_json(
     page_id: Optional[int] = Form(None),
     # 页面编辑提示词（get_down=true 时必传）
     edit_prompt: Optional[str] = Form(None),
+    regenerate_from_outline: str = Form("false"),
+    skip_pages: Optional[str] = Form(None),
     service: Paper2PPTService = Depends(get_service),
 ):
     """
@@ -283,7 +323,9 @@ async def paper2ppt_ppt_json(
         pagecontent=pagecontent,
         page_id=page_id,
         edit_prompt=edit_prompt,
+        regenerate_from_outline=regenerate_from_outline,
         image_resolution=image_resolution,
+        skip_pages=skip_pages,
     )
 
     _consume_paper2ppt_generate_charge(request, req)
@@ -320,6 +362,8 @@ async def paper2ppt_generate_task(
     pagecontent: Optional[str] = Form(None),
     page_id: Optional[int] = Form(None),
     edit_prompt: Optional[str] = Form(None),
+    regenerate_from_outline: str = Form("false"),
+    skip_pages: Optional[str] = Form(None),
     task_service: Paper2PPTTaskService = Depends(get_task_service),
 ):
     req = PPTGenerationRequest(
@@ -338,7 +382,9 @@ async def paper2ppt_generate_task(
         pagecontent=pagecontent,
         page_id=page_id,
         edit_prompt=edit_prompt,
+        regenerate_from_outline=regenerate_from_outline,
         image_resolution=image_resolution,
+        skip_pages=skip_pages,
     )
     return await task_service.submit_generate_task(req=req, reference_img=reference_img, request=request)
 
@@ -412,6 +458,7 @@ async def paper2ppt_frontend_generate(
     page_id: Optional[int] = Form(None),
     edit_prompt: Optional[str] = Form(None),
     current_slide: Optional[str] = Form(None),
+    skip_slides: Optional[str] = Form(None),
     service: Paper2PPTFrontendService = Depends(get_frontend_service),
 ):
     req = FrontendPPTGenerationRequest(
@@ -430,6 +477,7 @@ async def paper2ppt_frontend_generate(
         page_id=page_id,
         edit_prompt=edit_prompt,
         current_slide=current_slide,
+        skip_slides=skip_slides,
     )
     _consume_paper2ppt_frontend_charge(request, req)
     return await service.generate_slides(req=req, request=request)

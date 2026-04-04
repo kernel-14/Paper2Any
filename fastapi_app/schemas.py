@@ -257,6 +257,7 @@ class FrontendPPTGenerationRequest(BaseModel):
     page_id: Optional[int] = None
     edit_prompt: Optional[str] = None
     current_slide: Optional[str] = None
+    skip_slides: Optional[str] = None
 
 
 class FrontendPPTExportRequest(BaseModel):
@@ -511,8 +512,11 @@ class PPTGenerationRequest(BaseModel):
     pagecontent: Optional[str] = None
     page_id: Optional[int] = None
     edit_prompt: Optional[str] = None
+    regenerate_from_outline: str = "false"
     # 图像生成分辨率（1K/2K/4K 等）
     image_resolution: Optional[str] = None
+    # 增量生成：跳过的页码列表（JSON 格式，0-based），复用已有图片
+    skip_pages: Optional[str] = None
 
 
 class FullPipelineRequest(BaseModel):

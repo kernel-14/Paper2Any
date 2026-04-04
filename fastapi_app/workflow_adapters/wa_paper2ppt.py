@@ -310,7 +310,9 @@ async def run_paper2ppt_wf_api(
     get_down: bool | None = None,
     edit_page_num: int | None = None,
     edit_page_prompt: str | None = None,
+    regenerate_from_outline: bool = False,
     auto_fill_generated_pages: bool = True,
+    skip_pages: list[int] | None = None,
 ) -> Paper2PPTResponse:
     worker_result_path: Path | None = None
     if result_path:
@@ -331,7 +333,9 @@ async def run_paper2ppt_wf_api(
                 "get_down": get_down,
                 "edit_page_num": edit_page_num,
                 "edit_page_prompt": edit_page_prompt,
+                "regenerate_from_outline": regenerate_from_outline,
                 "auto_fill_generated_pages": auto_fill_generated_pages,
+                "skip_pages": skip_pages or [],
             },
             result_path=worker_result_path,
         )
@@ -344,7 +348,9 @@ async def run_paper2ppt_wf_api(
         get_down=get_down,
         edit_page_num=edit_page_num,
         edit_page_prompt=edit_page_prompt,
+        regenerate_from_outline=regenerate_from_outline,
         auto_fill_generated_pages=auto_fill_generated_pages,
+        skip_pages=skip_pages,
     )
 
 
@@ -355,7 +361,9 @@ async def run_paper2ppt_wf_api_local(
     get_down: bool | None = None,
     edit_page_num: int | None = None,
     edit_page_prompt: str | None = None,
+    regenerate_from_outline: bool = False,
     auto_fill_generated_pages: bool = True,
+    skip_pages: list[int] | None = None,
 ) -> Paper2PPTResponse:
     """
     只执行 paper2ppt 工作流。通常用于：
@@ -383,6 +391,9 @@ async def run_paper2ppt_wf_api_local(
         override_pagecontent=pagecontent,
     )
 
+    if skip_pages:
+        state.skip_pages = list(skip_pages)
+
     # 映射 get_down -> workflow state.gen_down
     if get_down is not None:
         state.gen_down = bool(get_down)
@@ -393,6 +404,7 @@ async def run_paper2ppt_wf_api_local(
             state.edit_page_num = int(edit_page_num)
         if edit_page_prompt is not None:
             state.edit_page_prompt = str(edit_page_prompt)
+        state.regenerate_from_outline = bool(regenerate_from_outline)
 
         if auto_fill_generated_pages and base_dir is not None:
             try:

@@ -159,6 +159,32 @@ class Paper2PPTService:
         scope = (raw_scope or "").strip().lower()
         return scope or default_scope
 
+    @staticmethod
+    def _parse_page_index_list(raw: Optional[str], *, max_count: int | None = None) -> list[int]:
+        text = str(raw or "").strip()
+        if not text:
+            return []
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, list):
+            return []
+
+        max_index = max_count - 1 if max_count is not None and max_count > 0 else None
+        indices: set[int] = set()
+        for item in payload:
+            try:
+                value = int(str(item).strip())
+            except (TypeError, ValueError):
+                continue
+            if value < 0:
+                continue
+            if max_index is not None and value > max_index:
+                continue
+            indices.add(value)
+        return sorted(indices)
+
     # ---------------- 公共接口 ---------------- #
 
     async def get_page_content(
@@ -321,6 +347,7 @@ class Paper2PPTService:
         # 转换字符串布尔值
         get_down_bool = str(req.get_down).lower() in ("true", "1", "yes")
         all_edited_down_bool = str(req.all_edited_down).lower() in ("true", "1", "yes")
+        regenerate_from_outline_bool = str(req.regenerate_from_outline).lower() in ("true", "1", "yes")
         credential_scope = self._resolve_credential_scope(req.credential_scope)
         resolved_chat_api_url, resolved_api_key = resolve_llm_credentials(
             req.chat_api_url,
@@ -332,12 +359,13 @@ class Paper2PPTService:
             req.api_key,
             scope=credential_scope,
         )
+        skip_pages = self._parse_page_index_list(req.skip_pages, max_count=len(pc) if pc else None)
 
         # 校验编辑/生成模式
         if get_down_bool:
             if req.page_id is None:
                 raise HTTPException(status_code=400, detail="page_id is required when get_down=true")
-            if not (req.edit_prompt or "").strip():
+            if not regenerate_from_outline_bool and not (req.edit_prompt or "").strip():
                 raise HTTPException(status_code=400, detail="edit_prompt is required when get_down=true")
         else:
             if not pc:
@@ -372,6 +400,8 @@ class Paper2PPTService:
             get_down=get_down_bool,
             edit_page_num=req.page_id,
             edit_page_prompt=req.edit_prompt,
+            regenerate_from_outline=regenerate_from_outline_bool,
+            skip_pages=skip_pages,
         )
 
         resp_dict = resp_model.model_dump()

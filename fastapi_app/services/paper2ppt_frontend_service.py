@@ -139,6 +139,37 @@ class Paper2PPTFrontendService:
                 "parallel_generation": True,
             }
 
+        skip_set: set[int] = set()
+        if req.skip_slides:
+            try:
+                parsed = json.loads(req.skip_slides)
+                if isinstance(parsed, list):
+                    skip_set = {
+                        int(item)
+                        for item in parsed
+                        if isinstance(item, (int, str)) and str(item).strip().isdigit()
+                    }
+            except (json.JSONDecodeError, TypeError, ValueError):
+                skip_set = set()
+
+        reused_slides: list[dict] = []
+        if skip_set:
+            log.info("[frontend] Incremental mode: skip_slides=%s", sorted(skip_set))
+            valid_skip_set: set[int] = set()
+            for idx in sorted(skip_set):
+                spec_path = slides_dir / f"page_{idx:03d}.json"
+                if not spec_path.exists():
+                    log.warning("[frontend] Spec not found for slide %s, will regenerate", idx)
+                    continue
+                try:
+                    content = await asyncio.to_thread(spec_path.read_text, encoding="utf-8")
+                    reused_slides.append(json.loads(content))
+                    valid_skip_set.add(idx)
+                    log.info("[frontend] Reusing existing spec for slide %s", idx)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("[frontend] Failed to load spec for slide %s: %s", idx, exc)
+            skip_set = valid_skip_set
+
         tasks = [
             self._generate_single_slide(
                 base_dir=base_dir,
@@ -160,9 +191,13 @@ class Paper2PPTFrontendService:
                 theme=deck_theme,
             )
             for index in range(len(pagecontent))
+            if index not in skip_set
         ]
-        slides = await asyncio.gather(*tasks)
-        ordered_slides = sorted(slides, key=lambda item: int(item.get("page_num", 0)))
+        generated_slides = await asyncio.gather(*tasks)
+        ordered_slides = sorted(
+            list(generated_slides) + reused_slides,
+            key=lambda item: int(item.get("page_num", 0)),
+        )
 
         for slide in ordered_slides:
             self._write_slide_spec(slides_dir, slide)

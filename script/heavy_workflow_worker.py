@@ -55,7 +55,9 @@ def _run_paper2ppt(in_data: dict) -> dict:
             get_down=in_data.get("get_down"),
             edit_page_num=in_data.get("edit_page_num"),
             edit_page_prompt=in_data.get("edit_page_prompt"),
+            regenerate_from_outline=bool(in_data.get("regenerate_from_outline", False)),
             auto_fill_generated_pages=bool(in_data.get("auto_fill_generated_pages", True)),
+            skip_pages=in_data.get("skip_pages") or [],
         )
     )
     return {"success": True, "response": response.model_dump(mode="json")}

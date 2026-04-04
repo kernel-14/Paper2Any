@@ -53,6 +53,32 @@ def _pagecontent_count(raw: Any) -> int:
     return len(payload) if isinstance(payload, list) else 0
 
 
+def _parse_page_index_list(raw: Any, *, max_count: int | None = None) -> list[int]:
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+
+    max_index = max_count - 1 if max_count is not None and max_count > 0 else None
+    indices: set[int] = set()
+    for item in payload:
+        try:
+            value = int(str(item).strip())
+        except (TypeError, ValueError):
+            continue
+        if value < 0:
+            continue
+        if max_index is not None and value > max_index:
+            continue
+        indices.add(value)
+    return sorted(indices)
+
+
 class Paper2PPTTaskService:
     """File-backed async tasks for long-running paper2ppt generation."""
 
@@ -227,12 +253,17 @@ class Paper2PPTTaskService:
             "all_edited_down": _is_truthy(req.all_edited_down),
             "page_id": _coerce_int(req.page_id),
             "edit_prompt": str(req.edit_prompt or "").strip(),
+            "regenerate_from_outline": _is_truthy(req.regenerate_from_outline),
             "style": str(req.style or "").strip(),
             "model": str(req.model or "").strip(),
             "language": str(req.language or "").strip(),
             "aspect_ratio": str(req.aspect_ratio or "").strip(),
             "img_gen_model_name": str(req.img_gen_model_name or "").strip(),
             "reference_img_name": reference_img_name,
+            "skip_pages": _parse_page_index_list(
+                req.skip_pages,
+                max_count=_pagecontent_count(req.pagecontent),
+            ),
         }
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
         submission_key = hashlib.sha256(encoded).hexdigest()
@@ -250,7 +281,18 @@ class Paper2PPTTaskService:
         if request is None or _is_truthy(req.all_edited_down):
             return
 
-        amount = 1 if _is_truthy(req.get_down) else max(1, _pagecontent_count(req.pagecontent))
+        if _is_truthy(req.get_down):
+            if _coerce_int(req.page_id) is None:
+                return
+            if not _is_truthy(req.regenerate_from_outline) and not str(req.edit_prompt or "").strip():
+                return
+            amount = 1
+        else:
+            total_pages = _pagecontent_count(req.pagecontent)
+            skip_count = len(_parse_page_index_list(req.skip_pages, max_count=total_pages))
+            amount = max(0, total_pages - skip_count)
+            if amount <= 0:
+                return
         user = getattr(request.state, "auth_user", None)
         guest_id = getattr(request.state, "guest_id", None)
 
