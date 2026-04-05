@@ -365,6 +365,7 @@ cd Paper2Any
 # 2. Configure environment variables
 cp fastapi_app/.env.example fastapi_app/.env
 cp frontend-workflow/.env.example frontend-workflow/.env
+cp deploy/docker.env.example deploy/docker.env
 ```
 
 **Required configuration:**
@@ -399,52 +400,59 @@ MINERU_API_KEY=your_mineru_api_key
 # Must match BACKEND_API_KEY in fastapi_app/.env
 VITE_API_KEY=your-backend-api-key
 
-# Required: LLM API URLs available in the UI dropdown (comma separated)
-VITE_DEFAULT_LLM_API_URL=https://api.openai.com/v1
-VITE_LLM_API_URLS=https://api.openai.com/v1
+# Usually keep VITE_API_BASE_URL empty in Docker, because nginx proxies /api and /outputs
+VITE_API_BASE_URL=
 
-# Optional: DrawIO page model candidates shown in the UI
-VITE_PAPER2DRAWIO_MODEL=claude-sonnet-4-5-20250929,gpt-5.2
 # Optional: Supabase (keep consistent with backend)
 # VITE_SUPABASE_URL=https://your-project-id.supabase.co
 # VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
 
+`deploy/docker.env` (compose overrides):
+```bash
+BACKEND_PORT=8000
+FRONTEND_PORT=3000
+DOCKER_APP_WORKERS=1
+
+# Optional: enable local SAM3 container by running DOCKER_WITH_SAM3=1 bash deploy/docker-up.sh
+SAM3_PORT=8021
+SAM3_SERVER_URLS=
+```
+
 ```bash
 # 3. Build + run
-docker compose up -d --build
+bash deploy/docker-up.sh
 ```
 
 Open:
 - Frontend: http://localhost:3000
 - Backend health: http://localhost:8000/health
 
-> **GPU services note:** Docker only starts the frontend and backend. No GPU model services are included.
+> **GPU services note:** Docker starts backend + frontend by default.
 > - Paper2PPT, Paper2Figure, Knowledge Base, etc. only need LLM APIs and work out of the box.
-> - **PDF2PPT, Image2PPT, Image2Drawio** require the SAM3 segmentation service (needs GPU), deployed separately:
+> - **PDF2PPT, Image2PPT, Image2Drawio** require SAM3 segmentation.
+> - You can either point backend `.env` to an external SAM3 service with `SAM3_SERVER_URLS=...`,
+>   or start the optional local SAM3 compose profile:
 >   ```bash
->   # On a machine with GPU
->   python -m dataflow_agent.toolkits.model_servers.sam3_server \
->       --port 8001 --checkpoint models/sam3/sam3.pt \
->       --bpe models/sam3/bpe_simple_vocab_16e6.txt.gz --device cuda
+>   DOCKER_WITH_SAM3=1 bash deploy/docker-up.sh
 >   ```
->   Then add to `fastapi_app/.env`: `SAM3_SERVER_URLS=http://GPU_MACHINE_IP:8001`
 >
 > See the "Advanced: Local Model Server Load Balancing" section below for details.
 
 Modify & update:
-- After changing code or `.env`, rebuild: `docker compose up -d --build`
+- After changing code or `.env`, rebuild: `bash deploy/docker-up.sh`
 - Pull latest code and rebuild:
   - `git pull`
-  - `docker compose up -d --build`
+  - `bash deploy/docker-up.sh`
 
 Common commands:
-- View logs: `docker compose logs -f`
-- Stop services: `docker compose down`
+- View logs: `bash deploy/docker-logs.sh`
+- Stop services: `bash deploy/docker-down.sh`
+- Build only: `bash deploy/docker-build.sh`
 
 Notes:
 - The first build may take a while (system deps + Python deps).
-- Frontend env is baked at build time (compose build args). If you change it, rebuild with `docker compose up -d --build`.
+- Frontend env is baked at build time. If you change `frontend-workflow/.env` or `deploy/docker.env`, rebuild with `bash deploy/docker-up.sh`.
 - Outputs/models are mounted to the host (`./outputs`, `./models`) for persistence.
 
 </details>
@@ -473,22 +481,36 @@ pip install -e .
 
 #### 2. Install Paper2Any-specific Dependencies (Required)
 
-Paper2Any involves LaTeX rendering, vector graphics processing as well as PPT/PDF conversion, which require extra dependencies:
+Paper2Any involves LaTeX rendering, vector graphics processing as well as PPT/PDF conversion, which require extra dependencies.
+
+The dependency boundary is now:
+- `requirements-base.txt`: shared cross-platform Python runtime
+- `requirements-paper.txt`: paper / PDF / figure extras
+- `requirements-cu12.txt`: NVIDIA CUDA 12 Linux GPU extras
+- `requirements-system-ubuntu.txt`: Ubuntu/Debian system packages, not Python packages
 
 ```bash
-# 1. Python dependencies
-pip install -r requirements-paper.txt || pip install -r requirements-paper-backup.txt
+# 1. Paper / PDF / figure Python extras
+pip install -r requirements-paper.txt
 
-# 2. LaTeX engine (tectonic) - recommended via conda
+# 2. NVIDIA GPU runtime extras (Linux + CUDA 12 only)
+pip install -r requirements-cu12.txt
+
+# 3. LaTeX engine (tectonic) - recommended via conda
 conda install -c conda-forge tectonic -y
 
-# 3. Resolve doclayout_yolo dependency conflicts (Important)
+# 4. Resolve doclayout_yolo dependency conflicts (Important)
 pip install doclayout_yolo --no-deps
 
-# 4. System dependencies (Ubuntu example)
+# 5. System dependencies (Ubuntu example; full list is mirrored in requirements-system-ubuntu.txt)
 sudo apt-get update
-sudo apt-get install -y inkscape libreoffice poppler-utils wkhtmltopdf
+sudo apt-get install -y ffmpeg inkscape libreoffice poppler-utils wkhtmltopdf
 ```
+
+> [!IMPORTANT]
+> `ffmpeg`, `libreoffice/soffice`, `inkscape`, `poppler-utils`, `wkhtmltopdf`, and `tectonic`
+> are external system tools. They are not installed by `pip`, and `deploy/start*.sh`
+> does not auto-install them.
 
 #### 3. Environment Variables
 
@@ -656,11 +678,14 @@ pip install -e .
 
 #### 2. Install Paper2Any-specific Dependencies (Recommended)
 
-Paper2Any involves LaTeX rendering and vector graphics processing, which require extra dependencies (see `requirements-paper.txt`):
+Paper2Any involves LaTeX rendering and vector graphics processing, which require extra dependencies:
 
 ```bash
 # Python dependencies
 pip install -r requirements-paper.txt
+
+# NVIDIA GPU runtime extras (Linux only; skip on Windows)
+# pip install -r requirements-cu12.txt
 
 # tectonic: LaTeX engine (recommended via conda)
 conda install -c conda-forge tectonic -y

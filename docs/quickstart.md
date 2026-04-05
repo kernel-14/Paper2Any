@@ -25,7 +25,10 @@ conda create -n paper2any python=3.11 -y
 conda activate paper2any
 
 pip install --upgrade pip
-pip install -r requirements-paper.txt || pip install -r requirements-paper-backup.txt
+pip install -r requirements-paper.txt
+
+# NVIDIA GPU 机器再额外安装
+pip install -r requirements-cu12.txt
 ```
 
 ### 3. 准备前端 Node 环境

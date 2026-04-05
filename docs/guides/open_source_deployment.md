@@ -210,7 +210,10 @@ conda create -n paper2any python=3.11 -y
 conda activate paper2any
 
 pip install --upgrade pip
-pip install -r requirements-paper.txt || pip install -r requirements-paper-backup.txt
+pip install -r requirements-paper.txt
+
+# NVIDIA GPU 机器再额外安装
+pip install -r requirements-cu12.txt
 ```
 
 如果你需要本地包开发模式：
@@ -222,6 +225,8 @@ pip install -e .
 说明：
 
 - `requirements-paper.txt` 已经包含 `requirements-base.txt`
+- `requirements-cu12.txt` 只用于 NVIDIA Linux + CUDA 12
+- `requirements-system-ubuntu.txt` 列的是系统包，不是 Python 包
 - 当前部署脚本会检查后端环境里是否至少有这些运行时依赖：`cv2`、`cairosvg`、`fastapi`、`moviepy`、`supabase`、`torch`、`uvicorn`
 
 ## 6.2 前端 Node 环境

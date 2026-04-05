@@ -356,6 +356,7 @@ cd Paper2Any
 # 2. 配置环境变量
 cp fastapi_app/.env.example fastapi_app/.env
 cp frontend-workflow/.env.example frontend-workflow/.env
+cp deploy/docker.env.example deploy/docker.env
 ```
 
 **必须修改的配置项：**
@@ -390,52 +391,59 @@ MINERU_API_KEY=your_mineru_api_key
 # 必须与后端 BACKEND_API_KEY 完全一致
 VITE_API_KEY=your-backend-api-key
 
-# 必填：前端可用的 LLM API 地址（逗号分隔，显示在 UI 下拉菜单中）
-VITE_DEFAULT_LLM_API_URL=https://api.openai.com/v1
-VITE_LLM_API_URLS=https://api.openai.com/v1
+# Docker 下通常保持为空，由 nginx 反代 /api 和 /outputs
+VITE_API_BASE_URL=
 
-# 可选：DrawIO 页面展示的模型候选列表
-VITE_PAPER2DRAWIO_MODEL=claude-sonnet-4-5-20250929,gpt-5.2
 # 可选：Supabase（与后端保持一致）
 # VITE_SUPABASE_URL=https://your-project-id.supabase.co
 # VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
 
+`deploy/docker.env`（compose 覆盖项）：
+```bash
+BACKEND_PORT=8000
+FRONTEND_PORT=3000
+DOCKER_APP_WORKERS=1
+
+# 可选：本地 SAM3 容器端口
+SAM3_PORT=8021
+SAM3_SERVER_URLS=
+```
+
 ```bash
 # 3. 构建并启动
-docker compose up -d --build
+bash deploy/docker-up.sh
 ```
 
 访问地址：
 - 前端：http://localhost:3000
 - 后端健康检查：http://localhost:8000/health
 
-> **GPU 服务说明：** Docker 默认启动的是前后端服务，不包含 GPU 模型服务。
+> **GPU 服务说明：** Docker 默认启动后端 + 前端。
 > - Paper2PPT、Paper2Figure、知识库等功能仅依赖 LLM API，Docker 启动后即可使用。
-> - **PDF2PPT、Image2PPT、Image2Drawio** 依赖 SAM3 图像分割服务（需要 GPU），需额外部署：
+> - **PDF2PPT、Image2PPT、Image2Drawio** 依赖 SAM3 图像分割。
+> - 你可以在 `fastapi_app/.env` 里配置外部 `SAM3_SERVER_URLS=...`，
+>   或者直接启用 compose 里的本地 SAM3 profile：
 >   ```bash
->   # 在有 GPU 的机器上启动 SAM3 服务
->   python -m dataflow_agent.toolkits.model_servers.sam3_server \
->       --port 8001 --checkpoint models/sam3/sam3.pt \
->       --bpe models/sam3/bpe_simple_vocab_16e6.txt.gz --device cuda
+>   DOCKER_WITH_SAM3=1 bash deploy/docker-up.sh
 >   ```
->   然后在 `fastapi_app/.env` 中添加：`SAM3_SERVER_URLS=http://GPU机器IP:8001`
 >
 > 详见下方「高级配置：本地模型服务负载均衡」部分。
 
 修改与更新：
-- 代码或 `.env` 变更后重新构建：`docker compose up -d --build`
+- 代码或 `.env` 变更后重新构建：`bash deploy/docker-up.sh`
 - 拉取最新代码并重建：
   - `git pull`
-  - `docker compose up -d --build`
+  - `bash deploy/docker-up.sh`
 
 常用命令：
-- 查看日志：`docker compose logs -f`
-- 停止服务：`docker compose down`
+- 查看日志：`bash deploy/docker-logs.sh`
+- 停止服务：`bash deploy/docker-down.sh`
+- 只构建：`bash deploy/docker-build.sh`
 
 说明：
 - 首次构建会比较慢（系统依赖 + Python 依赖）。
-- 前端配置在构建期生效（compose build args），修改后需重新 `docker compose up -d --build`。
+- 前端配置在构建期生效，修改 `frontend-workflow/.env` 或 `deploy/docker.env` 后需重新 `bash deploy/docker-up.sh`。
 - 输出和模型目录会挂载到宿主机（`./outputs`、`./models`），数据不会丢。
 
 </details>
@@ -464,22 +472,35 @@ pip install -e .
 
 #### 2. 安装 Paper2Any 相关依赖（必须）
 
-Paper2Any 涉及 LaTeX 渲染、矢量图处理以及 PPT/PDF 转换，需要额外依赖：
+Paper2Any 涉及 LaTeX 渲染、矢量图处理以及 PPT/PDF 转换，需要额外依赖。
+
+当前依赖边界建议如下：
+- `requirements-base.txt`：跨平台通用 Python 运行时
+- `requirements-paper.txt`：论文 / PDF / 科研绘图相关额外 Python 包
+- `requirements-cu12.txt`：NVIDIA CUDA 12 的 Linux GPU 额外依赖
+- `requirements-system-ubuntu.txt`：Ubuntu/Debian 系统包，不是 Python 包
 
 ```bash
-# 1. Python 依赖
-pip install -r requirements-paper.txt || pip install -r requirements-paper-backup.txt
+# 1. 论文 / PDF / 科研绘图额外 Python 依赖
+pip install -r requirements-paper.txt
 
-# 2. LaTeX 引擎 (tectonic) - 推荐用 conda 安装
+# 2. NVIDIA GPU 运行时额外依赖（仅 Linux + CUDA 12）
+pip install -r requirements-cu12.txt
+
+# 3. LaTeX 引擎 (tectonic) - 推荐用 conda 安装
 conda install -c conda-forge tectonic -y
 
-# 3. 解决 doclayout_yolo 依赖冲突（重要）
+# 4. 解决 doclayout_yolo 依赖冲突（重要）
 pip install doclayout_yolo --no-deps
 
-# 4. 系统依赖 (Ubuntu 示例)
+# 5. 系统依赖 (Ubuntu 示例；完整列表见 requirements-system-ubuntu.txt)
 sudo apt-get update
-sudo apt-get install -y inkscape libreoffice poppler-utils wkhtmltopdf
+sudo apt-get install -y ffmpeg inkscape libreoffice poppler-utils wkhtmltopdf
 ```
+
+> [!IMPORTANT]
+> `ffmpeg`、`libreoffice/soffice`、`inkscape`、`poppler-utils`、`wkhtmltopdf`、`tectonic`
+> 这些都是系统工具，不是 `pip` 包；`deploy/start*.sh` 也不会自动安装它们。
 
 #### 3. 配置环境变量
 
@@ -644,11 +665,14 @@ pip install -e .
 
 #### 2. 安装 Paper2Any 相关依赖（推荐）
 
-Paper2Any 涉及 LaTeX 渲染与矢量图处理，需要额外依赖（见 requirements-paper.txt）：
+Paper2Any 涉及 LaTeX 渲染与矢量图处理，需要额外依赖：
 
 ```bash
 # Python 依赖
 pip install -r requirements-paper.txt
+
+# NVIDIA GPU 运行时额外依赖（仅 Linux，需要时再装）
+# pip install -r requirements-cu12.txt
 
 # tectonic：LaTeX 引擎（推荐用 conda 安装）
 conda install -c conda-forge tectonic -y
