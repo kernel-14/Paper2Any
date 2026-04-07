@@ -23,6 +23,22 @@ class Paper2PosterService:
     """paper2poster 请求编排与文件落盘。"""
 
     @staticmethod
+    def _resolve_existing_output_file(path_value: str) -> Optional[Path]:
+        raw = (path_value or "").strip()
+        if not raw:
+            return None
+
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = (PROJECT_ROOT / candidate).resolve()
+
+        if candidate.is_file():
+            return candidate
+
+        log.warning("[paper2poster] output file missing on disk: %s", raw)
+        return None
+
+    @staticmethod
     def _validate_poster_dimensions(width: float, height: float) -> None:
         if width <= 0 or height <= 0:
             raise HTTPException(status_code=400, detail="poster dimensions must be positive")
@@ -138,13 +154,16 @@ class Paper2PosterService:
             raise HTTPException(status_code=500, detail=result.get("message") or "Failed to generate poster")
 
         pptx_path = (result.get("output_pptx_path") or "").strip()
-        if not pptx_path:
-            raise HTTPException(status_code=500, detail="Poster workflow finished without a PPTX output")
+        pptx_file = self._resolve_existing_output_file(pptx_path)
+        if pptx_file is None:
+            detail = result.get("message") or "Poster workflow finished without a valid PPTX output"
+            raise HTTPException(status_code=500, detail=detail)
 
         png_path = (result.get("output_png_path") or "").strip()
+        png_file = self._resolve_existing_output_file(png_path) if png_path else None
         return {
             "success": True,
-            "pptx_url": _to_outputs_url(pptx_path),
-            "png_url": _to_outputs_url(png_path) if png_path else None,
+            "pptx_url": _to_outputs_url(str(pptx_file)),
+            "png_url": _to_outputs_url(str(png_file)) if png_file else None,
             "message": "Poster generated successfully",
         }
