@@ -185,8 +185,10 @@ async def run_pdf2ppt_workflow(args, input_path: Path, output_dir: Path):
     # Set PDF file path
     state.pdf_file = str(input_path)
 
-    # Select workflow based on use_ai_edit flag
-    workflow_name = "pdf2ppt_qwenvl" if args.use_ai_edit else "pdf2ppt_parallel"
+    # The legacy `pdf2ppt_parallel` workflow now lives under deprecated/ and is
+    # no longer registered by the lazy workflow loader. Keep a single supported
+    # CLI path and use `--use-ai-edit` only as a feature flag inside the request.
+    workflow_name = "pdf2ppt_qwenvl"
 
     log.info("%s", "=" * 60)
     log.info("PDF2PPT Workflow Starting")

@@ -105,6 +105,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException, Request, UploadFile
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from fastapi_app.config import settings
 from fastapi_app.schemas import (
     FullPipelineRequest,
     OutlineRefineRequest,
@@ -114,6 +115,7 @@ from fastapi_app.schemas import (
 from fastapi_app.services.managed_api_service import (
     resolve_image_generation_credentials,
     resolve_llm_credentials,
+    resolve_model_name,
 )
 from fastapi_app.utils import (
     _to_outputs_url,
@@ -234,7 +236,11 @@ class Paper2PPTService:
             credential_scope=credential_scope,
             chat_api_key=resolved_api_key,
             api_key=resolved_api_key,
-            model=req.model,
+            model=resolve_model_name(
+                req.model,
+                managed_default=settings.PAPER2PPT_OUTLINE_MODEL,
+                fallback_default=settings.PAPER2PPT_DEFAULT_MODEL,
+            ),
             gen_fig_model="",
             input_type=wf_input_type,
             input_content=wf_input_content,
@@ -249,6 +255,21 @@ class Paper2PPTService:
         resp_model = await run_paper2page_content_wf_api(p2ppt_req, result_path=run_dir)
 
         resp_dict = resp_model.model_dump()
+        resp_dict["pagecontent"] = self._normalize_pagecontent_items(resp_dict.get("pagecontent", []))
+        if not resp_dict["pagecontent"]:
+            backend_error = str(resp_dict.get("error") or "").strip()
+            if backend_error:
+                raise HTTPException(status_code=502, detail=backend_error)
+            raw_text = (req.text or "").strip()
+            if str(req.input_type).lower() == "text" and use_long_paper_bool and req.page_count > 20:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"当前为文本模式，输入内容仅 {len(raw_text)} 个字符，不足以稳定生成 {req.page_count} 页长文大纲。"
+                        "请提供更完整的正文，或改用 Topic 模式。"
+                    ),
+                )
+            raise HTTPException(status_code=502, detail="后端未生成有效大纲，请稍后重试")
         if request is not None:
             resp_dict["pagecontent"] = self._convert_pagecontent_paths_to_urls(
                 resp_dict.get("pagecontent", []), request, resp_model.result_path
@@ -286,7 +307,11 @@ class Paper2PPTService:
             credential_scope=credential_scope,
             chat_api_key=resolved_api_key,
             api_key=resolved_api_key,
-            model=req.model,
+            model=resolve_model_name(
+                req.model,
+                managed_default=settings.PAPER2PPT_OUTLINE_MODEL,
+                fallback_default=settings.PAPER2PPT_DEFAULT_MODEL,
+            ),
             gen_fig_model="",
             input_type="TEXT",
             input_content="",
@@ -307,6 +332,7 @@ class Paper2PPTService:
         )
 
         resp_dict = resp_model.model_dump()
+        resp_dict["pagecontent"] = self._normalize_pagecontent_items(resp_dict.get("pagecontent", []))
         if request is not None:
             resp_dict["pagecontent"] = self._convert_pagecontent_paths_to_urls(
                 resp_dict.get("pagecontent", []), request, resp_model.result_path
@@ -381,8 +407,16 @@ class Paper2PPTService:
             api_key=resolved_api_key,
             image_api_url=resolved_image_api_url,
             image_api_key=resolved_image_api_key,
-            model=req.model,
-            gen_fig_model=req.img_gen_model_name,
+            model=resolve_model_name(
+                req.model,
+                managed_default=settings.PAPER2PPT_CONTENT_MODEL,
+                fallback_default=settings.PAPER2PPT_DEFAULT_MODEL,
+            ),
+            gen_fig_model=resolve_model_name(
+                req.img_gen_model_name,
+                managed_default=settings.PAPER2PPT_IMAGE_GEN_MODEL,
+                fallback_default=settings.PAPER2PPT_DEFAULT_IMAGE_MODEL,
+            ),
             input_type="PDF",
             input_content="",
             aspect_ratio=req.aspect_ratio,
@@ -446,8 +480,16 @@ class Paper2PPTService:
             api_key=resolved_api_key,
             image_api_url=resolved_image_api_url,
             image_api_key=resolved_image_api_key,
-            model=req.model,
-            gen_fig_model=req.img_gen_model_name,
+            model=resolve_model_name(
+                req.model,
+                managed_default=settings.PAPER2PPT_CONTENT_MODEL,
+                fallback_default=settings.PAPER2PPT_DEFAULT_MODEL,
+            ),
+            gen_fig_model=resolve_model_name(
+                req.img_gen_model_name,
+                managed_default=settings.PAPER2PPT_IMAGE_GEN_MODEL,
+                fallback_default=settings.PAPER2PPT_DEFAULT_IMAGE_MODEL,
+            ),
             input_type=wf_input_type,
             input_content=wf_input_content,
             aspect_ratio=req.aspect_ratio,
@@ -845,4 +887,66 @@ class Paper2PPTService:
         for i, it in enumerate(obj):
             if not isinstance(it, dict):
                 raise HTTPException(status_code=400, detail=f"pagecontent[{i}] must be an object(dict)")
-        return obj
+        return self._normalize_pagecontent_items(obj)
+
+    def _extract_outline_text(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return " ".join(value.strip().split())
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+        if isinstance(value, dict):
+            preferred_keys = (
+                "text",
+                "value",
+                "content",
+                "summary",
+                "title",
+                "label",
+                "body",
+                "description",
+                "reason",
+                "point",
+            )
+            for key in preferred_keys:
+                text = self._extract_outline_text(value.get(key))
+                if text:
+                    return text
+            for item in value.values():
+                text = self._extract_outline_text(item)
+                if text:
+                    return text
+            return ""
+        if isinstance(value, list):
+            parts = [self._extract_outline_text(item) for item in value]
+            return " ".join(part for part in parts if part)
+        return " ".join(str(value).strip().split())
+
+    def _normalize_outline_points(self, value: Any) -> List[str]:
+        if isinstance(value, list):
+            items = [self._extract_outline_text(item) for item in value]
+        else:
+            items = [self._extract_outline_text(value)]
+        return [item for item in items if item]
+
+    def _normalize_pagecontent_items(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        normalized: List[Dict[str, Any]] = []
+        for raw in items:
+            item = copy.deepcopy(raw)
+            if "title" in item:
+                item["title"] = self._extract_outline_text(item.get("title"))
+            if "layout_description" in item:
+                item["layout_description"] = self._extract_outline_text(item.get("layout_description"))
+            if "key_points" in item:
+                item["key_points"] = self._normalize_outline_points(item.get("key_points"))
+            if "asset_ref" in item:
+                asset_ref = item.get("asset_ref")
+                if isinstance(asset_ref, list):
+                    normalized_refs = self._normalize_outline_points(asset_ref)
+                    item["asset_ref"] = normalized_refs[0] if normalized_refs else None
+                else:
+                    normalized_ref = self._extract_outline_text(asset_ref)
+                    item["asset_ref"] = normalized_ref or None
+            normalized.append(item)
+        return normalized

@@ -285,7 +285,7 @@ class DeepResearchRequest(BaseModel):
     file_paths: List[str] = []
     api_url: Optional[str] = None
     api_key: Optional[str] = None
-    model: str = settings.MODEL_GPT_4O
+    model: str = settings.KB_CHAT_MODEL
     language: str = "zh"
     email: Optional[str] = None
     user_id: Optional[str] = None
@@ -478,7 +478,7 @@ class KBReportRequest(BaseModel):
     file_paths: List[str] = []
     api_url: Optional[str] = None
     api_key: Optional[str] = None
-    model: str = "gpt-5.1"
+    model: str = settings.KB_CHAT_MODEL
     language: str = "zh"
     report_style: Literal["insight", "analysis"] = "insight"
     length: Literal["short", "standard", "long"] = "standard"
@@ -613,3 +613,4 @@ class Paper2PPTResponse(BaseModel):
     pagecontent: List[Dict[str, Any]] = []
     result_path: str = ""
     all_output_files: List[str] = []
+    error: str = ""
