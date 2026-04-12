@@ -1162,6 +1162,7 @@ Schema:
 {
   "theme_name": "short id",
   "visual_mood": "one sentence",
+  "style_family": "modern | business | academic | creative",
   "palette": {
     "bg": "#0b1020",
     "panel": "rgba(15,23,42,0.92)",
@@ -1200,6 +1201,7 @@ Requirements:
 6. The theme_lock must be concrete enough to prevent per-slide drift during later regeneration.
 7. If style_prompt contains explicit color or material directions, translate them into the palette instead of ignoring them.
 8. Do not default to cyan/teal accents unless the style_prompt clearly asks for them.
+9. style_family must be one of modern, business, academic, creative and should match the tone implied by style_prompt.
 """.strip()
 
         user_payload = {
@@ -1257,10 +1259,11 @@ Hard requirements:
 6. Use the supplied deck theme so every page looks like the same presentation family.
 7. Treat theme_lock as non-negotiable. Do not invent a new palette family, component language, or typography system.
 8. Keep titles within 2 lines, body content concise, and list lengths <= 6.
-9. If visual_assets are present, prefer `image_focus`. If no visual_assets are present, do not choose `image_focus`.
+9. Use `image_focus` only when the slide genuinely benefits from a dominant supporting visual. If no visual_assets are present, do not choose `image_focus`.
 10. `cards_2x2` must contain exactly 4 cards.
 11. `timeline` must contain 3 to 5 items.
 12. `comparison` must contain left and right sections with short bullet lists.
+13. Do not overuse one layout type across the deck. Reuse the shared theme, but vary page structure according to the content.
 
 Layout content schema:
 - cover:
@@ -1473,8 +1476,6 @@ If there are any meaningful problems, set passed=false and provide a concrete re
             "timeline",
         }:
             return fallback_slide
-        if visual_assets and layout_type != "image_focus":
-            layout_type = "image_focus"
         if not visual_assets and layout_type == "image_focus":
             return fallback_slide
 
@@ -1882,6 +1883,7 @@ If there are any meaningful problems, set passed=false and provide a concrete re
         return normalized
 
     def _build_fallback_theme(self, *, language: str, style: str) -> Dict[str, Any]:
+        style_family = self._infer_style_family(style)
         footer_text = "Paper2Any Frontend PPT"
         section_label_template = (
             "第 {page_num:02d}/{slide_count:02d} 页"
@@ -1895,9 +1897,11 @@ If there are any meaningful problems, set passed=false and provide a concrete re
             )
         )
         palette = self._resolve_palette_from_style(style)
+        family_rules = self._build_family_rules(style_family)
         return {
             "theme_name": "scholarly_signal",
             "visual_mood": visual_mood,
+            "style_family": style_family,
             "palette": palette,
             "typography": {
                 "title_font_stack": 'Georgia, "Times New Roman", serif',
@@ -1907,6 +1911,108 @@ If there are any meaningful problems, set passed=false and provide a concrete re
                 "summary_size": 26,
                 "body_size": 24,
             },
+            "layout_rules": family_rules["layout_rules"],
+            "component_rules": family_rules["component_rules"],
+            "theme_lock": {
+                "must_keep": [
+                    "Use only the deck palette colors for fills, borders, and emphasis.",
+                    "Keep the same serif title style and sans body style across the deck.",
+                    family_rules["must_keep"],
+                ],
+                "preferred_layout_patterns": family_rules["preferred_layout_patterns"],
+                "component_signature": family_rules["component_signature"],
+                "avoid": [
+                    "Do not introduce unrelated bright color families.",
+                    "Do not use more than two main columns.",
+                    family_rules["avoid"],
+                ],
+            },
+            "footer_text": footer_text,
+            "section_label_template": section_label_template,
+        }
+
+    def _infer_style_family(self, style: str) -> str:
+        style_text = (style or "").strip().lower()
+        if any(keyword in style_text for keyword in ("academic", "report", "paper", "research", "严谨", "学术", "报告")):
+            return "academic"
+        if any(keyword in style_text for keyword in ("business", "brand", "corporate", "executive", "商务", "商业", "品牌")):
+            return "business"
+        if any(keyword in style_text for keyword in ("creative", "illustration", "warm", "friendly", "playful", "soft", "创意", "插画", "柔和")):
+            return "creative"
+        return "modern"
+
+    def _build_family_rules(self, style_family: str) -> Dict[str, Any]:
+        family = (style_family or "modern").strip().lower()
+        if family == "academic":
+            return {
+                "layout_rules": [
+                    "Keep generous white or paper-like breathing room and stable reading rhythm.",
+                    "Prefer section, bullets, two-column, and comparison layouts over showy hero frames.",
+                    "Use image_focus only for genuinely visual pages.",
+                    "Reserve a quiet footer for provenance or page identity.",
+                ],
+                "component_rules": [
+                    "Use restrained panels, subtle dividers, and report-like hierarchy.",
+                    "Keep decoration secondary to text structure and evidence density.",
+                    "Avoid billboard marketing blocks or exaggerated hero cards.",
+                ],
+                "preferred_layout_patterns": [
+                    "section_break",
+                    "split_report_grid",
+                    "comparison_columns",
+                    "timeline_overview",
+                ],
+                "component_signature": "Refined report-style panels, paper-like spacing, and calm academic hierarchy.",
+                "must_keep": "Keep the visual language rigorous, airy, and report-like rather than glossy.",
+                "avoid": "Do not use neon glow, oversized promo badges, or playful sticker motifs.",
+            }
+        if family == "business":
+            return {
+                "layout_rules": [
+                    "Favor crisp comparison, KPI-card, and executive-summary patterns.",
+                    "Use strong alignment and clear block grouping with moderate density.",
+                    "Keep image_focus to showcase slides only.",
+                    "Prefer horizontal momentum and strong title anchoring.",
+                ],
+                "component_rules": [
+                    "Use sharp, decisive cards with stronger contrast and cleaner edges.",
+                    "Accent color should be used sparingly for strategic emphasis.",
+                    "Make hierarchy feel presentation-room ready rather than article-like.",
+                ],
+                "preferred_layout_patterns": [
+                    "executive_hero",
+                    "split_insight_grid",
+                    "kpi_cards",
+                    "decision_comparison",
+                ],
+                "component_signature": "Crisp executive cards, strong title anchors, and controlled business contrast.",
+                "must_keep": "Keep the deck polished, decisive, and boardroom-oriented.",
+                "avoid": "Do not use whimsical illustration accents or soft scrapbook styling.",
+            }
+        if family == "creative":
+            return {
+                "layout_rules": [
+                    "Allow more asymmetry, softer framing, and stronger hero moments.",
+                    "Alternate between image_focus, section, cards, and timeline layouts to keep the deck lively.",
+                    "Use comparison and two-column layouts only when the content clearly calls for them.",
+                    "Let accent shapes support the narrative without overpowering text.",
+                ],
+                "component_rules": [
+                    "Use soft panels, expressive color accents, and warmer visual transitions.",
+                    "Preserve readability, but allow more character in backgrounds and separators.",
+                    "Favor friendly, presentation-forward composition over report density.",
+                ],
+                "preferred_layout_patterns": [
+                    "hero_spotlight",
+                    "soft_cards",
+                    "story_timeline",
+                    "image_caption_feature",
+                ],
+                "component_signature": "Warm expressive panels, softer geometry, and more atmospheric deck motion.",
+                "must_keep": "Keep the deck warm, expressive, and visibly more playful than academic or business presets.",
+                "avoid": "Do not collapse the deck back into a uniform report grid on every page.",
+            }
+        return {
             "layout_rules": [
                 "Keep 72px+ safe margins around major content.",
                 "Prefer one dominant text area plus one supporting card or metrics block.",
@@ -1914,31 +2020,19 @@ If there are any meaningful problems, set passed=false and provide a concrete re
                 "Reserve a quiet footer area for page identity or takeaway.",
             ],
             "component_rules": [
-                "Use rounded cards with subtle borders and a restrained glow.",
+                "Use refined rounded cards with controlled glow and layered depth.",
                 "Use one accent color only for emphasis, not for large fills.",
                 "Keep text hierarchy clear with title, summary, and supporting bullets.",
             ],
-            "theme_lock": {
-                "must_keep": [
-                    "Use only the deck palette colors for fills, borders, and emphasis.",
-                    "Keep the same serif title style and sans body style across the deck.",
-                    "Keep rounded translucent cards and a quiet footer treatment.",
-                ],
-                "preferred_layout_patterns": [
-                    "hero_with_side_card",
-                    "split_insight_grid",
-                    "stacked_cards",
-                    "timeline_overview",
-                ],
-                "component_signature": "Rounded refined cards, restrained accent usage, thin borders, and quiet academic spacing.",
-                "avoid": [
-                    "Do not introduce unrelated bright color families.",
-                    "Do not use more than two main columns.",
-                    "Do not use oversized billboard titles or poster-like full-bleed blocks.",
-                ],
-            },
-            "footer_text": footer_text,
-            "section_label_template": section_label_template,
+            "preferred_layout_patterns": [
+                "hero_with_side_card",
+                "split_insight_grid",
+                "stacked_cards",
+                "timeline_overview",
+            ],
+            "component_signature": "Modern layered cards, restrained glow, and polished presentation spacing.",
+            "must_keep": "Keep the deck sleek, layered, and contemporary without drifting into plain report style.",
+            "avoid": "Do not flatten everything into plain white report blocks unless the prompt explicitly asks for that.",
         }
 
     def _resolve_palette_from_style(self, style: str) -> Dict[str, str]:
@@ -2060,6 +2154,12 @@ If there are any meaningful problems, set passed=false and provide a concrete re
                 return default
             return max(min_value, min(max_value, parsed))
 
+        def _clean_style_family(value: Any, default: str) -> str:
+            candidate = str(value or "").strip().lower()
+            if candidate in {"modern", "business", "academic", "creative"}:
+                return candidate
+            return default
+
         def _clean_list(value: Any, defaults: List[str], limit: int = 6) -> List[str]:
             if isinstance(value, list):
                 cleaned = self._normalize_outline_points(value, limit=limit, item_limit=140)
@@ -2073,6 +2173,7 @@ If there are any meaningful problems, set passed=false and provide a concrete re
         return {
             "theme_name": _clean_text(payload.get("theme_name"), fallback["theme_name"]),
             "visual_mood": _clean_text(payload.get("visual_mood"), fallback["visual_mood"]),
+            "style_family": _clean_style_family(payload.get("style_family"), fallback["style_family"]),
             "palette": {
                 "bg": _clean_color(palette_raw.get("bg"), fallback["palette"]["bg"]),
                 "panel": _clean_color(palette_raw.get("panel"), fallback["palette"]["panel"]),
@@ -2177,6 +2278,7 @@ If there are any meaningful problems, set passed=false and provide a concrete re
         return {
             "theme_name": str(theme.get("theme_name") or "deck_theme").strip(),
             "visual_mood": str(theme.get("visual_mood") or "").strip(),
+            "style_family": str(theme.get("style_family") or "modern").strip(),
             "palette_anchor": {
                 "bg": str(palette.get("bg") or "").strip(),
                 "primary": str(palette.get("primary") or "").strip(),
@@ -2467,6 +2569,42 @@ If there are any meaningful problems, set passed=false and provide a concrete re
                 break
         return cleaned
 
+    def _choose_fallback_layout_type(
+        self,
+        *,
+        outline_item: Dict[str, Any],
+        slide_index: int,
+        theme: Dict[str, Any],
+        visual_assets: Sequence[Dict[str, Any]],
+    ) -> str:
+        style_family = str(theme.get("style_family") or "modern").strip().lower()
+        layout_hint = str(outline_item.get("layout_description") or "").lower()
+        title = str(outline_item.get("title") or "").lower()
+        key_points = self._normalize_outline_points(outline_item.get("key_points"), limit=6, item_limit=120)
+        bullet_count = len(key_points)
+
+        if slide_index == 0:
+            return "cover"
+        if any(keyword in title for keyword in ("overview", "agenda", "outline", "introduction", "background", "summary")):
+            return "section"
+        if any(keyword in layout_hint for keyword in ("compare", "contrast", "trade-off", "versus", "vs", "对比", "比较")):
+            return "comparison"
+        if any(keyword in layout_hint for keyword in ("timeline", "process", "workflow", "loop", "pipeline", "流程", "时间线")):
+            return "timeline"
+        if any(keyword in layout_hint for keyword in ("card", "grid", "domain", "application", "industry", "module", "模块", "领域")):
+            return "cards_2x2"
+        if bullet_count >= 5 and style_family in {"business", "modern"}:
+            return "two_column"
+        if visual_assets and style_family in {"creative", "modern"} and slide_index % 3 == 1:
+            return "image_focus"
+        if bullet_count >= 4 and style_family == "academic":
+            return "bullets"
+        if style_family == "business":
+            return "two_column"
+        if style_family == "creative":
+            return "cards_2x2"
+        return "bullets"
+
     def _build_fallback_slide(
         self,
         *,
@@ -2489,7 +2627,12 @@ If there are any meaningful problems, set passed=false and provide a concrete re
             eyebrow = section_template.format(page_num=slide_index + 1, slide_count=slide_count)
         except Exception:  # noqa: BLE001
             eyebrow = f"Slide {slide_index + 1:02d}/{slide_count:02d}"
-        layout_type = "image_focus" if visual_assets else "bullets"
+        layout_type = self._choose_fallback_layout_type(
+            outline_item=outline_item,
+            slide_index=slide_index,
+            theme=theme,
+            visual_assets=visual_assets,
+        )
         content = {
             "eyebrow": eyebrow,
             "title": str(outline_item.get("title") or f"Slide {slide_index + 1}"),

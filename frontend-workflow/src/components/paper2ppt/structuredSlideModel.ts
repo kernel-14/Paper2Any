@@ -2,6 +2,7 @@ import {
   FrontendDeckTheme,
   FrontendEditableField,
   FrontendSlide,
+  FrontendDeckStyleFamily,
   FrontendVisualAsset,
   StructuredSlideLayoutType,
 } from './types';
@@ -17,6 +18,7 @@ export interface StructuredSlideValidationResult {
 const fallbackTheme: FrontendDeckTheme = {
   themeName: 'paper2ppt_structured',
   visualMood: 'calm academic dark theme',
+  styleFamily: 'modern',
   footerText: 'Paper2Any Structured PPT',
   sectionLabelTemplate: 'Slide {page_num:02d}/{slide_count:02d}',
   palette: {
@@ -60,6 +62,14 @@ export const ensureDeckTheme = (theme?: FrontendDeckTheme | null): FrontendDeckT
     ...(theme?.themeLock || {}),
   },
 });
+
+export const getDeckStyleFamily = (theme?: FrontendDeckTheme | null): FrontendDeckStyleFamily => {
+  const candidate = String(theme?.styleFamily || '').trim().toLowerCase();
+  if (candidate === 'business' || candidate === 'academic' || candidate === 'creative') {
+    return candidate;
+  }
+  return 'modern';
+};
 
 export const getFieldMap = (slide: FrontendSlide) =>
   new Map(slide.editableFields.map((field) => [field.key, field]));

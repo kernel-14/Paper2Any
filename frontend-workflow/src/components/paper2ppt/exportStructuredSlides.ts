@@ -3,7 +3,7 @@ import {
   FrontendDeckTheme,
   FrontendSlide,
 } from './types';
-import { ensureDeckTheme, getListValue, getTextValue, getVisualAsset } from './structuredSlideModel';
+import { ensureDeckTheme, getDeckStyleFamily, getListValue, getTextValue, getVisualAsset } from './structuredSlideModel';
 
 const PX_PER_IN = 120;
 const SHAPE_ROUND_RECT = 'roundRect' as const;
@@ -32,22 +32,33 @@ const normalizeFontFace = (value: string, fallback: string) => {
 
 const toBulletText = (items: string[]) => items.filter(Boolean).map((item) => `• ${item}`).join('\n');
 
-const blobToDataUrl = (blob: Blob) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(reader.error || new Error('failed to read blob'));
-    reader.readAsDataURL(blob);
-  });
+const blobToDataUrl = async (blob: Blob) => {
+  if (typeof FileReader !== 'undefined') {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(reader.error || new Error('failed to read blob'));
+      reader.readAsDataURL(blob);
+    });
+  }
+  const bufferCtor = (globalThis as { Buffer?: { from(data: ArrayBuffer | Uint8Array): { toString(enc: string): string } } }).Buffer;
+  if (!bufferCtor) {
+    throw new Error('Buffer is not available in this runtime');
+  }
+  const bytes = bufferCtor.from(await blob.arrayBuffer());
+  const mimeType = blob.type || 'application/octet-stream';
+  return `data:${mimeType};base64,${bytes.toString('base64')}`;
+};
 
 const imageCache = new Map<string, Promise<string>>();
 
-const fetchImageData = async (url: string) => {
+const fetchImageData = async (url: string, assetBaseUrl?: string) => {
   if (!imageCache.has(url)) {
     imageCache.set(
       url,
       (async () => {
-        const res = await fetch(url);
+        const resolvedUrl = url.startsWith('/') && assetBaseUrl ? new URL(url, assetBaseUrl).toString() : url;
+        const res = await fetch(resolvedUrl);
         if (!res.ok) {
           throw new Error(`failed to fetch image: ${res.status}`);
         }
@@ -95,26 +106,28 @@ const addPanel = (
   theme: FrontendDeckTheme,
   box: { x: number; y: number; w: number; h: number },
 ) => {
+  const family = getDeckStyleFamily(theme);
   slide.addShape(SHAPE_ROUND_RECT, {
     x: px(box.x),
     y: px(box.y),
     w: px(box.w),
     h: px(box.h),
-    rectRadius: 0.12,
-    fill: { color: resolveHex(theme.palette.panel, '#0F172A'), transparency: 8 },
-    line: { color: resolveHex(theme.palette.primary, '#7dd3fc'), transparency: 70, width: 1 },
+    rectRadius: family === 'academic' ? 0.06 : family === 'business' ? 0.08 : 0.12,
+    fill: { color: resolveHex(theme.palette.panel, '#0F172A'), transparency: family === 'academic' ? 2 : 8 },
+    line: { color: resolveHex(theme.palette.primary, '#7dd3fc'), transparency: family === 'academic' ? 82 : 70, width: family === 'academic' ? 0.8 : 1 },
   });
 };
 
 const addFooterPill = (slide: pptxgen.Slide, theme: FrontendDeckTheme, text: string) => {
+  const family = getDeckStyleFamily(theme);
   slide.addShape(SHAPE_ROUND_RECT, {
     x: px(1290),
     y: px(780),
     w: px(230),
     h: px(56),
-    rectRadius: 0.15,
-    fill: { color: resolveHex(theme.palette.bg, '#0b1020'), transparency: 20 },
-    line: { color: resolveHex(theme.palette.accent, '#f59e0b'), transparency: 55, width: 1 },
+    rectRadius: family === 'academic' ? 0.06 : 0.15,
+    fill: { color: resolveHex(family === 'academic' ? theme.palette.panel : theme.palette.bg, '#0b1020'), transparency: family === 'academic' ? 0 : 20 },
+    line: { color: resolveHex(theme.palette.accent, '#f59e0b'), transparency: family === 'academic' ? 72 : 55, width: 1 },
   });
   addTextBox(slide, text, {
     x: 1312,
@@ -133,8 +146,9 @@ const addImageBox = async (
   slide: pptxgen.Slide,
   imageUrl: string,
   box: { x: number; y: number; w: number; h: number },
+  assetBaseUrl?: string,
 ) => {
-  const data = await fetchImageData(imageUrl);
+  const data = await fetchImageData(imageUrl, assetBaseUrl);
   slide.addImage({
     data,
     x: px(box.x),
@@ -156,13 +170,27 @@ export const exportStructuredSlidesToPptx = async ({
   slides,
   deckTheme,
   fileName,
+  assetBaseUrl,
+  outputType = 'blob',
 }: {
   slides: FrontendSlide[];
   deckTheme?: FrontendDeckTheme | null;
   fileName?: string;
+  assetBaseUrl?: string;
+  outputType?: 'blob' | 'nodebuffer';
 }) => {
   const theme = ensureDeckTheme(deckTheme);
-  const pres = new pptxgen();
+  const family = getDeckStyleFamily(theme);
+  const PptxGenCtor = ((pptxgen as unknown as { default?: unknown }).default ?? pptxgen) as new () => {
+    layout: string;
+    author: string;
+    company: string;
+    subject: string;
+    title: string;
+    addSlide(): pptxgen.Slide;
+    write(options?: Record<string, unknown>): Promise<Blob | Uint8Array>;
+  };
+  const pres = new PptxGenCtor();
   pres.layout = 'LAYOUT_WIDE';
   pres.author = 'Paper2Any';
   pres.company = 'Paper2Any';
@@ -172,6 +200,42 @@ export const exportStructuredSlidesToPptx = async ({
   for (const structuredSlide of slides) {
     const slide = pres.addSlide();
     slide.background = { color: resolveHex(theme.palette.bg, '#0b1020') };
+    if (family === 'business') {
+      slide.addShape(SHAPE_ROUND_RECT, {
+        x: 0,
+        y: 0,
+        w: px(1600),
+        h: px(32),
+        rectRadius: 0,
+        fill: { color: resolveHex(theme.palette.accent, '#f59e0b') },
+        line: { color: resolveHex(theme.palette.accent, '#f59e0b'), transparency: 100 },
+      });
+    } else if (family === 'creative') {
+      slide.addShape(SHAPE_ELLIPSE, {
+        x: px(1160),
+        y: px(-40),
+        w: px(360),
+        h: px(280),
+        fill: { color: resolveHex(theme.palette.secondary, '#38bdf8'), transparency: 72 },
+        line: { color: resolveHex(theme.palette.secondary, '#38bdf8'), transparency: 100 },
+      });
+      slide.addShape(SHAPE_ELLIPSE, {
+        x: px(-90),
+        y: px(640),
+        w: px(300),
+        h: px(230),
+        fill: { color: resolveHex(theme.palette.accent, '#f59e0b'), transparency: 78 },
+        line: { color: resolveHex(theme.palette.accent, '#f59e0b'), transparency: 100 },
+      });
+    } else if (family === 'academic') {
+      slide.addShape(SHAPE_LINE, {
+        x: px(72),
+        y: px(120),
+        w: px(1456),
+        h: 0,
+        line: { color: resolveHex(theme.palette.primary, '#7dd3fc'), transparency: 82, width: 0.8 },
+      });
+    }
     const layout: any = structuredSlide.layoutData;
 
     const titleColor = resolveHex(theme.palette.text, '#e2e8f0');
@@ -461,7 +525,7 @@ export const exportStructuredSlidesToPptx = async ({
         });
         addPanel(slide, theme, { x: 850, y: 220, w: 600, h: 430 });
         if (imageAsset?.src) {
-          await addImageBox(slide, imageAsset.src, { x: 874, y: 244, w: 552, h: 324 });
+          await addImageBox(slide, imageAsset.src, { x: 874, y: 244, w: 552, h: 324 }, assetBaseUrl);
         }
         addTextBox(slide, getTextValue(structuredSlide, layout.visualCaptionKey), {
           x: 882,
@@ -616,9 +680,15 @@ export const exportStructuredSlidesToPptx = async ({
   }
 
   const outputFileName = fileName || 'paper2ppt_structured_editable.pptx';
-  const blob = await pres.write({ outputType: 'blob', compression: true });
+  const result = await pres.write({ outputType, compression: true });
+  if (outputType === 'nodebuffer') {
+    return {
+      buffer: result as Uint8Array,
+      fileName: outputFileName,
+    };
+  }
   return {
-    blob: blob as Blob,
+    blob: result as Blob,
     fileName: outputFileName,
   };
 };

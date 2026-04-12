@@ -43,10 +43,19 @@ cd ..
 
 ### 4. 复制配置模板
 
+推荐优先使用**粗粒度 simple 模式**，只填少量 URL / Key：
+
+```bash
+cp fastapi_app/.env.simple.example fastapi_app/.env
+cp frontend-workflow/.env.simple.example frontend-workflow/.env
+cp deploy/profiles/nv.env.example deploy/profiles/nv.env
+```
+
+如果你需要逐个 workflow 覆盖模型，再改用：
+
 ```bash
 cp fastapi_app/.env.example fastapi_app/.env
 cp frontend-workflow/.env.example frontend-workflow/.env
-cp deploy/profiles/nv.env.example deploy/profiles/nv.env
 ```
 
 ### 5. 至少填这几项
@@ -56,8 +65,9 @@ cp deploy/profiles/nv.env.example deploy/profiles/nv.env
 ```bash
 BACKEND_API_KEY=your-backend-api-key
 APP_BILLING_MODE=free
-DF_API_URL=https://your-llm-gateway/v1
-DF_API_KEY=your-llm-api-key
+PAPER2ANY_CONFIG_MODE=simple
+SIMPLE_TEXT_API_URL=https://your-llm-gateway/v1
+SIMPLE_TEXT_API_KEY=your-llm-api-key
 ```
 
 `frontend-workflow/.env`

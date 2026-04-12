@@ -291,11 +291,11 @@ async def paper2ppt_pagecontent_json(
     file: Optional[UploadFile] = File(None),
     text: Optional[str] = Form(None),
     # 可选控制参数（对 pagecontent 也可能有用）
-    model: str = Form("gpt-5.1"),
+    model: str = Form(settings.PAPER2PPT_OUTLINE_MODEL),
     language: str = Form("zh"),
     style: str = Form(""),
     reference_img: Optional[UploadFile] = File(None),
-    gen_fig_model: str = Form(...),
+    gen_fig_model: str = Form(settings.PAPER2PPT_IMAGE_GEN_MODEL),
     page_count: int = Form(...),
     use_long_paper: str = Form("false"),
     # 当 input_type=pdf 时，按“幻灯片图片”模式解析
@@ -349,7 +349,7 @@ async def paper2ppt_pagecontent_json(
 )
 async def paper2ppt_generate_slides(
     request: Request,
-    img_gen_model_name: str = Form(...),
+    img_gen_model_name: str = Form(settings.PAPER2PPT_IMAGE_GEN_MODEL),
     chat_api_url: Optional[str] = Form(None),
     api_key: Optional[str] = Form(None),
     credential_scope: Optional[str] = Form(None),
@@ -358,7 +358,7 @@ async def paper2ppt_generate_slides(
     reference_img: Optional[UploadFile] = File(None),
     aspect_ratio: str = Form("16:9"),
     language: str = Form("en"),
-    model: str = Form("gpt-5.1"),
+    model: str = Form(settings.PAPER2PPT_CONTENT_MODEL),
     image_resolution: Optional[str] = Form(None),
     result_path: str = Form(...),
     pagecontent: str = Form(...),
@@ -407,7 +407,7 @@ async def paper2ppt_generate_slides(
 async def paper2ppt_edit_slide(
     page_id: int,
     request: Request,
-    img_gen_model_name: str = Form(...),
+    img_gen_model_name: str = Form(settings.PAPER2PPT_IMAGE_GEN_MODEL),
     chat_api_url: Optional[str] = Form(None),
     api_key: Optional[str] = Form(None),
     credential_scope: Optional[str] = Form(None),
@@ -416,7 +416,7 @@ async def paper2ppt_edit_slide(
     reference_img: Optional[UploadFile] = File(None),
     aspect_ratio: str = Form("16:9"),
     language: str = Form("en"),
-    model: str = Form("gpt-5.1"),
+    model: str = Form(settings.PAPER2PPT_CONTENT_MODEL),
     image_resolution: Optional[str] = Form(None),
     result_path: str = Form(...),
     pagecontent: Optional[str] = Form(None),
@@ -464,7 +464,7 @@ async def paper2ppt_edit_slide(
 )
 async def paper2ppt_finalize(
     request: Request,
-    img_gen_model_name: str = Form(...),
+    img_gen_model_name: str = Form(settings.PAPER2PPT_IMAGE_GEN_MODEL),
     chat_api_url: Optional[str] = Form(None),
     api_key: Optional[str] = Form(None),
     credential_scope: Optional[str] = Form(None),
@@ -473,7 +473,7 @@ async def paper2ppt_finalize(
     reference_img: Optional[UploadFile] = File(None),
     aspect_ratio: str = Form("16:9"),
     language: str = Form("en"),
-    model: str = Form("gpt-5.1"),
+    model: str = Form(settings.PAPER2PPT_CONTENT_MODEL),
     image_resolution: Optional[str] = Form(None),
     result_path: str = Form(...),
     pagecontent: Optional[str] = Form(None),
@@ -519,7 +519,7 @@ async def paper2ppt_finalize(
 )
 async def paper2ppt_ppt_json(
     request: Request,
-    img_gen_model_name: str = Form(...),
+    img_gen_model_name: str = Form(settings.PAPER2PPT_IMAGE_GEN_MODEL),
     chat_api_url: Optional[str] = Form(None),
     api_key: Optional[str] = Form(None),
     credential_scope: Optional[str] = Form(None),
@@ -529,7 +529,7 @@ async def paper2ppt_ppt_json(
     reference_img: Optional[UploadFile] = File(None),
     aspect_ratio: str = Form("16:9"),
     language: str = Form("en"),
-    model: str = Form("gpt-5.1"),
+    model: str = Form(settings.PAPER2PPT_CONTENT_MODEL),
     image_resolution: Optional[str] = Form(None),
     # 关键：是否进入编辑，是否已经有了 nano 结果，现在要进入页面逐个页面编辑
     get_down: str = Form("false"),  # 字符串形式，需要手动转换
@@ -592,7 +592,7 @@ async def paper2ppt_ppt_json(
 )
 async def paper2ppt_generate_slides_task(
     request: Request,
-    img_gen_model_name: str = Form(...),
+    img_gen_model_name: str = Form(settings.PAPER2PPT_IMAGE_GEN_MODEL),
     chat_api_url: Optional[str] = Form(None),
     api_key: Optional[str] = Form(None),
     credential_scope: Optional[str] = Form(None),
@@ -601,7 +601,7 @@ async def paper2ppt_generate_slides_task(
     reference_img: Optional[UploadFile] = File(None),
     aspect_ratio: str = Form("16:9"),
     language: str = Form("en"),
-    model: str = Form("gpt-5.1"),
+    model: str = Form(settings.PAPER2PPT_CONTENT_MODEL),
     image_resolution: Optional[str] = Form(None),
     result_path: str = Form(...),
     pagecontent: str = Form(...),
@@ -639,7 +639,7 @@ async def paper2ppt_generate_slides_task(
 )
 async def paper2ppt_finalize_task(
     request: Request,
-    img_gen_model_name: str = Form(...),
+    img_gen_model_name: str = Form(settings.PAPER2PPT_IMAGE_GEN_MODEL),
     chat_api_url: Optional[str] = Form(None),
     api_key: Optional[str] = Form(None),
     credential_scope: Optional[str] = Form(None),
@@ -648,7 +648,7 @@ async def paper2ppt_finalize_task(
     reference_img: Optional[UploadFile] = File(None),
     aspect_ratio: str = Form("16:9"),
     language: str = Form("en"),
-    model: str = Form("gpt-5.1"),
+    model: str = Form(settings.PAPER2PPT_CONTENT_MODEL),
     image_resolution: Optional[str] = Form(None),
     result_path: str = Form(...),
     pagecontent: Optional[str] = Form(None),
@@ -684,7 +684,7 @@ async def paper2ppt_finalize_task(
 )
 async def paper2ppt_generate_task(
     request: Request,
-    img_gen_model_name: str = Form(...),
+    img_gen_model_name: str = Form(settings.PAPER2PPT_IMAGE_GEN_MODEL),
     chat_api_url: Optional[str] = Form(None),
     api_key: Optional[str] = Form(None),
     credential_scope: Optional[str] = Form(None),
@@ -693,7 +693,7 @@ async def paper2ppt_generate_task(
     reference_img: Optional[UploadFile] = File(None),
     aspect_ratio: str = Form("16:9"),
     language: str = Form("en"),
-    model: str = Form("gpt-5.1"),
+    model: str = Form(settings.PAPER2PPT_CONTENT_MODEL),
     image_resolution: Optional[str] = Form(None),
     get_down: str = Form("false"),
     all_edited_down: str = Form("false"),
@@ -762,7 +762,7 @@ async def paper2ppt_outline_refine(
     api_key: Optional[str] = Form(None),
     credential_scope: Optional[str] = Form(None),
     email: Optional[str] = Form(None),
-    model: str = Form("gpt-5.1"),
+    model: str = Form(settings.PAPER2PPT_OUTLINE_MODEL),
     language: str = Form("zh"),
     result_path: Optional[str] = Form(None),
     service: Paper2PPTService = Depends(get_service),
@@ -800,7 +800,7 @@ async def paper2ppt_frontend_generate(
     api_key: Optional[str] = Form(None),
     credential_scope: Optional[str] = Form(None),
     email: Optional[str] = Form(None),
-    model: str = Form("gpt-5.1"),
+    model: str = Form(settings.PAPER2PPT_CONTENT_MODEL),
     language: str = Form("zh"),
     style: str = Form(""),
     include_images: bool = Form(False),

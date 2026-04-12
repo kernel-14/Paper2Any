@@ -98,11 +98,13 @@ from uuid import uuid4
 
 import copy
 import hashlib
+import json
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, Request, UploadFile
+import httpx
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from fastapi_app.config import settings
@@ -124,12 +126,13 @@ from fastapi_app.utils import (
 )
 from fastapi_app.workflow_adapters.wa_paper2ppt import (
     run_paper2page_content_wf_api,
-    run_paper2page_content_refine_wf_api,
     run_paper2ppt_full_pipeline,
     run_paper2ppt_wf_api,
 )
+from dataflow_agent.promptstemplates import PromptsTemplateGenerator
 from dataflow_agent.logger import get_logger
 from dataflow_agent.utils import get_project_root
+from dataflow_agent.utils_common import robust_parse_json
 
 log = get_logger(__name__)
 
@@ -140,6 +143,10 @@ _PREVIEW_SMALL_FILE_BYTES = 900 * 1024
 _PREVIEW_JPEG_QUALITY = 82
 _PIL_RESAMPLING = getattr(Image, "Resampling", Image)
 _PIL_LANCZOS = _PIL_RESAMPLING.LANCZOS
+_OUTLINE_PATCH_CHUNK_SIZE = 4
+_OUTLINE_PLAN_SOURCE_CHAR_LIMIT = 12000
+_OUTLINE_PLAN_PAGE_DIGEST_LIMIT = 22000
+_OUTLINE_REWRITE_SOURCE_CHAR_LIMIT = 9000
 
 
 class Paper2PPTService:
@@ -324,21 +331,25 @@ class Paper2PPTService:
         if req.result_path:
             result_root = self.resolve_result_path(req.result_path)
 
-        resp_model = await run_paper2page_content_refine_wf_api(
-            p2ppt_req,
+        source_text, mineru_output = self._load_outline_refine_source_context(result_root)
+        refined_pagecontent = await self._refine_outline_with_patch_plan(
+            req=p2ppt_req,
             pagecontent=pc,
             outline_feedback=req.outline_feedback,
-            result_path=result_root,
+            source_text=source_text,
+            mineru_output=mineru_output,
         )
-
-        resp_dict = resp_model.model_dump()
-        resp_dict["pagecontent"] = self._normalize_pagecontent_items(resp_dict.get("pagecontent", []))
+        resp_dict: Dict[str, Any] = {
+            "success": True,
+            "pagecontent": self._normalize_pagecontent_items(refined_pagecontent),
+            "result_path": str(result_root) if result_root is not None else (req.result_path or ""),
+        }
         if request is not None:
             resp_dict["pagecontent"] = self._convert_pagecontent_paths_to_urls(
-                resp_dict.get("pagecontent", []), request, resp_model.result_path
+                resp_dict.get("pagecontent", []), request, resp_dict.get("result_path")
             )
-        if request is not None:
-            resp_dict["all_output_files"] = self._collect_output_files_as_urls(resp_model.result_path, request)
+        if request is not None and resp_dict.get("result_path"):
+            resp_dict["all_output_files"] = self._collect_output_files_as_urls(resp_dict["result_path"], request)
         else:
             resp_dict["all_output_files"] = []
 
@@ -875,8 +886,6 @@ class Paper2PPTService:
 
     def _parse_pagecontent_json(self, pagecontent_json: str) -> List[Dict[str, Any]]:
         try:
-            import json
-
             obj = json.loads(pagecontent_json)
         except Exception as e:  # noqa: BLE001
             raise HTTPException(status_code=400, detail=f"invalid pagecontent json: {e}") from e
@@ -950,3 +959,505 @@ class Paper2PPTService:
                     item["asset_ref"] = normalized_ref or None
             normalized.append(item)
         return normalized
+
+    def _load_outline_refine_source_context(self, result_root: Path | None) -> tuple[str, str]:
+        if result_root is None:
+            return "", ""
+
+        input_dir = result_root / "input"
+        text_candidates = [
+            input_dir / "input.txt",
+            input_dir / "input_topic.txt",
+        ]
+        source_text = ""
+        for candidate in text_candidates:
+            if candidate.exists():
+                try:
+                    source_text = candidate.read_text(encoding="utf-8")
+                    if source_text.strip():
+                        break
+                except Exception:
+                    continue
+
+        mineru_output = ""
+        try:
+            markdown_candidates = list(result_root.glob("*/auto/*.md"))
+        except Exception:
+            markdown_candidates = []
+        for candidate in markdown_candidates:
+            try:
+                mineru_output = candidate.read_text(encoding="utf-8")
+                if mineru_output.strip():
+                    break
+            except Exception:
+                continue
+
+        return source_text, mineru_output
+
+    async def _refine_outline_with_patch_plan(
+        self,
+        *,
+        req: Any,
+        pagecontent: List[Dict[str, Any]],
+        outline_feedback: str,
+        source_text: str,
+        mineru_output: str,
+    ) -> List[Dict[str, Any]]:
+        original_pages = self._normalize_pagecontent_items(pagecontent)
+        if not original_pages:
+            return []
+
+        plan = await self._plan_outline_refine_operations(
+            req=req,
+            pagecontent=original_pages,
+            outline_feedback=outline_feedback,
+            source_text=source_text,
+            mineru_output=mineru_output,
+        )
+        working_pages, rewrite_targets = self._apply_outline_patch_plan(original_pages, plan)
+        rewritten_pages = await self._rewrite_outline_pages_by_chunks(
+            req=req,
+            pagecontent=working_pages,
+            rewrite_targets=rewrite_targets,
+            global_instruction=str(plan.get("global_instruction") or "").strip(),
+            outline_feedback=outline_feedback,
+            source_text=source_text,
+            mineru_output=mineru_output,
+        )
+        return self._normalize_pagecontent_items(rewritten_pages)
+
+    async def _plan_outline_refine_operations(
+        self,
+        *,
+        req: Any,
+        pagecontent: List[Dict[str, Any]],
+        outline_feedback: str,
+        source_text: str,
+        mineru_output: str,
+    ) -> Dict[str, Any]:
+        prompt_generator = PromptsTemplateGenerator(output_language=req.language)
+        outline_digest = self._build_outline_digest(pagecontent, max_chars=_OUTLINE_PLAN_PAGE_DIGEST_LIMIT)
+        source_excerpt = self._build_source_excerpt(
+            source_text=source_text,
+            mineru_output=mineru_output,
+            max_chars=_OUTLINE_PLAN_SOURCE_CHAR_LIMIT,
+        )
+        system_prompt = prompt_generator.render(
+            "system_prompt_for_paper2ppt_outline_edit_planner_agent",
+            language=req.language,
+        )
+        task_prompt = prompt_generator.render(
+            "task_prompt_for_paper2ppt_outline_edit_planner_agent",
+            page_count=len(pagecontent),
+            outline_feedback=outline_feedback,
+            outline_digest=outline_digest,
+            source_excerpt=source_excerpt,
+            language=req.language,
+        )
+
+        try:
+            raw_plan = await self._invoke_json_llm(
+                chat_api_url=req.chat_api_url,
+                api_key=req.api_key,
+                model_name=req.model,
+                system_prompt=system_prompt,
+                task_prompt=task_prompt,
+                max_tokens=4096,
+            )
+        except Exception as exc:
+            log.warning("[paper2ppt][outline-refine] planner failed: %s", exc)
+            raw_plan = {}
+
+        return self._normalize_outline_patch_plan(
+            raw_plan,
+            page_count=len(pagecontent),
+            outline_feedback=outline_feedback,
+        )
+
+    async def _rewrite_outline_pages_by_chunks(
+        self,
+        *,
+        req: Any,
+        pagecontent: List[Dict[str, Any]],
+        rewrite_targets: set[int],
+        global_instruction: str,
+        outline_feedback: str,
+        source_text: str,
+        mineru_output: str,
+    ) -> List[Dict[str, Any]]:
+        normalized_pages = self._normalize_pagecontent_items(pagecontent)
+        if not normalized_pages:
+            return []
+
+        if not rewrite_targets:
+            return normalized_pages
+
+        prompt_generator = PromptsTemplateGenerator(output_language=req.language)
+        source_excerpt = self._build_source_excerpt(
+            source_text=source_text,
+            mineru_output=mineru_output,
+            max_chars=_OUTLINE_REWRITE_SOURCE_CHAR_LIMIT,
+        )
+        chunks = self._build_rewrite_chunks(sorted(rewrite_targets), len(normalized_pages), _OUTLINE_PATCH_CHUNK_SIZE)
+        rewritten_pages = copy.deepcopy(normalized_pages)
+
+        for chunk_start, chunk_end in chunks:
+            chunk_pages = copy.deepcopy(normalized_pages[chunk_start : chunk_end + 1])
+            page_instruction_lines: List[str] = []
+            for offset, page in enumerate(chunk_pages, start=chunk_start + 1):
+                specific_instruction = str(page.pop("_patch_instruction", "") or "").strip()
+                if specific_instruction:
+                    page_instruction_lines.append(f"- Page {offset}: {specific_instruction}")
+            previous_title = rewritten_pages[chunk_start - 1]["title"] if chunk_start > 0 else ""
+            next_title = rewritten_pages[chunk_end + 1]["title"] if chunk_end + 1 < len(rewritten_pages) else ""
+
+            system_prompt = prompt_generator.render(
+                "system_prompt_for_paper2ppt_outline_patch_rewriter_agent",
+                language=req.language,
+            )
+            task_prompt = prompt_generator.render(
+                "task_prompt_for_paper2ppt_outline_patch_rewriter_agent",
+                page_count=len(chunk_pages),
+                chunk_start=chunk_start + 1,
+                chunk_end=chunk_end + 1,
+                outline_feedback=outline_feedback,
+                global_instruction=global_instruction or outline_feedback,
+                page_specific_instructions="\n".join(page_instruction_lines) or "- None",
+                previous_title=previous_title or "None",
+                next_title=next_title or "None",
+                source_excerpt=source_excerpt,
+                pagecontent=json.dumps(chunk_pages, ensure_ascii=False, indent=2),
+                language=req.language,
+            )
+
+            try:
+                raw_rewrite = await self._invoke_json_llm(
+                    chat_api_url=req.chat_api_url,
+                    api_key=req.api_key,
+                    model_name=req.model,
+                    system_prompt=system_prompt,
+                    task_prompt=task_prompt,
+                    max_tokens=4096,
+                )
+            except Exception as exc:
+                log.warning(
+                    "[paper2ppt][outline-refine] chunk rewrite failed for %s-%s: %s",
+                    chunk_start + 1,
+                    chunk_end + 1,
+                    exc,
+                )
+                continue
+
+            if not isinstance(raw_rewrite, list) or len(raw_rewrite) != len(chunk_pages):
+                log.warning(
+                    "[paper2ppt][outline-refine] chunk rewrite length mismatch for %s-%s, keep original",
+                    chunk_start + 1,
+                    chunk_end + 1,
+                )
+                continue
+
+            normalized_chunk = self._normalize_pagecontent_items(
+                [item for item in raw_rewrite if isinstance(item, dict)]
+            )
+            if len(normalized_chunk) != len(chunk_pages):
+                log.warning(
+                    "[paper2ppt][outline-refine] chunk rewrite invalid payload for %s-%s, keep original",
+                    chunk_start + 1,
+                    chunk_end + 1,
+                )
+                continue
+
+            merged_chunk: List[Dict[str, Any]] = []
+            for original_page, rewritten_page in zip(chunk_pages, normalized_chunk):
+                merged_page = copy.deepcopy(original_page)
+                merged_page["title"] = rewritten_page.get("title") or original_page.get("title") or ""
+                merged_page["layout_description"] = (
+                    rewritten_page.get("layout_description")
+                    or original_page.get("layout_description")
+                    or ""
+                )
+                rewritten_points = self._normalize_outline_points(rewritten_page.get("key_points", []))
+                merged_page["key_points"] = rewritten_points or original_page.get("key_points") or []
+                if rewritten_page.get("asset_ref") is not None:
+                    merged_page["asset_ref"] = rewritten_page.get("asset_ref")
+                merged_chunk.append(merged_page)
+
+            rewritten_pages[chunk_start : chunk_end + 1] = merged_chunk
+
+        for page in rewritten_pages:
+            if isinstance(page, dict):
+                page.pop("_origin_page_number", None)
+                page.pop("_patch_instruction", None)
+        return rewritten_pages
+
+    def _normalize_outline_patch_plan(
+        self,
+        raw_plan: Any,
+        *,
+        page_count: int,
+        outline_feedback: str,
+    ) -> Dict[str, Any]:
+        base_plan: Dict[str, Any] = {
+            "global_instruction": outline_feedback.strip(),
+            "apply_global_rewrite": True,
+            "operations": [],
+        }
+        if not isinstance(raw_plan, dict):
+            return base_plan
+
+        global_instruction = self._extract_outline_text(raw_plan.get("global_instruction")) or outline_feedback.strip()
+        apply_global_rewrite = bool(raw_plan.get("apply_global_rewrite"))
+        operations: List[Dict[str, Any]] = []
+        raw_operations = raw_plan.get("operations")
+        if isinstance(raw_operations, list):
+            for raw_operation in raw_operations:
+                if not isinstance(raw_operation, dict):
+                    continue
+                op_type = str(raw_operation.get("type") or "").strip().lower()
+                if op_type not in {"update", "delete", "insert_after", "move"}:
+                    continue
+                normalized_op: Dict[str, Any] = {"type": op_type}
+                if op_type in {"update", "delete", "move"}:
+                    page_numbers = self._normalize_plan_page_numbers(raw_operation.get("page_numbers"), page_count)
+                    if not page_numbers:
+                        continue
+                    normalized_op["page_numbers"] = page_numbers
+                if op_type == "update":
+                    instruction = self._extract_outline_text(raw_operation.get("instruction"))
+                    if not instruction:
+                        continue
+                    normalized_op["instruction"] = instruction
+                if op_type == "insert_after":
+                    after_page = self._normalize_single_page_number(raw_operation.get("page_number"), page_count)
+                    count = self._normalize_insert_count(raw_operation.get("count"))
+                    instruction = self._extract_outline_text(raw_operation.get("instruction"))
+                    if after_page is None or count <= 0 or not instruction:
+                        continue
+                    normalized_op["page_number"] = after_page
+                    normalized_op["count"] = count
+                    normalized_op["instruction"] = instruction
+                if op_type == "move":
+                    after_page = self._normalize_single_page_number(raw_operation.get("after_page_number"), page_count)
+                    if after_page is None:
+                        continue
+                    normalized_op["after_page_number"] = after_page
+                operations.append(normalized_op)
+
+        if operations:
+            explicit_restructure = any(op["type"] in {"insert_after", "delete", "move"} for op in operations)
+            apply_global_rewrite = bool(raw_plan.get("apply_global_rewrite")) if raw_plan.get("apply_global_rewrite") is not None else not explicit_restructure
+
+        return {
+            "global_instruction": global_instruction,
+            "apply_global_rewrite": apply_global_rewrite or not operations,
+            "operations": operations,
+        }
+
+    def _normalize_plan_page_numbers(self, value: Any, page_count: int) -> List[int]:
+        if not isinstance(value, list):
+            return []
+        numbers: set[int] = set()
+        for item in value:
+            normalized = self._normalize_single_page_number(item, page_count)
+            if normalized is not None:
+                numbers.add(normalized)
+        return sorted(numbers)
+
+    def _normalize_single_page_number(self, value: Any, page_count: int) -> Optional[int]:
+        try:
+            number = int(str(value).strip())
+        except Exception:
+            return None
+        if 1 <= number <= page_count:
+            return number
+        return None
+
+    def _normalize_insert_count(self, value: Any) -> int:
+        try:
+            count = int(str(value).strip())
+        except Exception:
+            return 0
+        return max(0, min(count, 8))
+
+    def _apply_outline_patch_plan(
+        self,
+        pagecontent: List[Dict[str, Any]],
+        plan: Dict[str, Any],
+    ) -> tuple[List[Dict[str, Any]], set[int]]:
+        working_pages: List[Dict[str, Any]] = []
+        for idx, page in enumerate(self._normalize_pagecontent_items(pagecontent), start=1):
+            page_copy = copy.deepcopy(page)
+            page_copy["_origin_page_number"] = idx
+            working_pages.append(page_copy)
+
+        rewrite_targets: set[int] = set()
+        for operation in plan.get("operations", []):
+            op_type = operation.get("type")
+            if op_type == "delete":
+                delete_numbers = set(operation.get("page_numbers", []))
+                working_pages = [
+                    page for page in working_pages
+                    if page.get("_origin_page_number") not in delete_numbers
+                ]
+                continue
+
+            if op_type == "move":
+                move_numbers = operation.get("page_numbers", [])
+                after_page_number = operation.get("after_page_number")
+                moving_pages = [
+                    page for page in working_pages
+                    if page.get("_origin_page_number") in move_numbers
+                ]
+                if not moving_pages:
+                    continue
+                working_pages = [
+                    page for page in working_pages
+                    if page.get("_origin_page_number") not in move_numbers
+                ]
+                insert_index = self._find_insert_index_after_origin(working_pages, after_page_number)
+                working_pages[insert_index:insert_index] = moving_pages
+                continue
+
+            if op_type == "insert_after":
+                insert_after = operation.get("page_number")
+                insert_index = self._find_insert_index_after_origin(working_pages, insert_after)
+                for offset in range(operation.get("count", 0)):
+                    placeholder = {
+                        "title": "",
+                        "layout_description": "",
+                        "key_points": [],
+                        "asset_ref": None,
+                        "_origin_page_number": None,
+                        "_patch_instruction": operation.get("instruction", ""),
+                    }
+                    working_pages.insert(insert_index + offset, placeholder)
+                    rewrite_targets.add(insert_index + offset)
+                continue
+
+            if op_type == "update":
+                update_numbers = set(operation.get("page_numbers", []))
+                for idx, page in enumerate(working_pages):
+                    if page.get("_origin_page_number") in update_numbers:
+                        existing_instruction = str(page.get("_patch_instruction") or "").strip()
+                        new_instruction = str(operation.get("instruction") or "").strip()
+                        if existing_instruction and new_instruction:
+                            page["_patch_instruction"] = f"{existing_instruction}\n{new_instruction}"
+                        elif new_instruction:
+                            page["_patch_instruction"] = new_instruction
+                        rewrite_targets.add(idx)
+
+        if plan.get("apply_global_rewrite"):
+            rewrite_targets.update(range(len(working_pages)))
+
+        return working_pages, rewrite_targets
+
+    def _find_insert_index_after_origin(self, pages: List[Dict[str, Any]], after_page_number: Optional[int]) -> int:
+        if after_page_number is None:
+            return len(pages)
+        for idx, page in enumerate(pages):
+            if page.get("_origin_page_number") == after_page_number:
+                return idx + 1
+        return len(pages)
+
+    def _build_rewrite_chunks(self, target_indices: List[int], total_pages: int, max_chunk_size: int) -> List[tuple[int, int]]:
+        if not target_indices or total_pages <= 0:
+            return []
+
+        chunks: List[tuple[int, int]] = []
+        group_start = target_indices[0]
+        previous = target_indices[0]
+        for index in target_indices[1:]:
+            group_size = previous - group_start + 1
+            if index != previous + 1 or group_size >= max_chunk_size:
+                chunks.append((group_start, previous))
+                group_start = index
+            previous = index
+        chunks.append((group_start, previous))
+        return chunks
+
+    def _build_outline_digest(self, pagecontent: List[Dict[str, Any]], *, max_chars: int) -> str:
+        parts: List[str] = []
+        current_len = 0
+        for idx, page in enumerate(pagecontent, start=1):
+            bullet_preview = "; ".join((page.get("key_points") or [])[:3])
+            line = (
+                f"Page {idx}: title={page.get('title') or ''} | "
+                f"layout={page.get('layout_description') or ''} | "
+                f"bullets={bullet_preview}"
+            ).strip()
+            if not line:
+                continue
+            if current_len + len(line) > max_chars:
+                break
+            parts.append(line)
+            current_len += len(line) + 1
+        return "\n".join(parts)
+
+    def _build_source_excerpt(
+        self,
+        *,
+        source_text: str,
+        mineru_output: str,
+        max_chars: int,
+    ) -> str:
+        combined = (source_text or "").strip()
+        if mineru_output and mineru_output.strip():
+            combined = f"{combined}\n\n{mineru_output.strip()}".strip()
+        if len(combined) <= max_chars:
+            return combined
+        return combined[:max_chars]
+
+    async def _invoke_json_llm(
+        self,
+        *,
+        chat_api_url: str,
+        api_key: str,
+        model_name: str,
+        system_prompt: str,
+        task_prompt: str,
+        max_tokens: int = 4096,
+    ) -> Any:
+        base_url = str(chat_api_url or "").rstrip("/")
+        if not base_url:
+            raise ValueError("chat_api_url is required for outline refine")
+        endpoint = f"{base_url}/chat/completions"
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": task_prompt},
+            ],
+            "temperature": 0.0,
+            "max_tokens": max_tokens,
+        }
+
+        proxy = None
+        for key in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+            value = str(os.getenv(key) or "").strip()
+            if value.startswith(("http://", "https://")):
+                proxy = value
+                break
+
+        client_kwargs: Dict[str, Any] = {
+            "timeout": httpx.Timeout(300.0),
+            "trust_env": False,
+        }
+        if proxy:
+            client_kwargs["proxy"] = proxy
+
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            response = await client.post(endpoint, headers=headers, json=payload)
+            response.raise_for_status()
+            body = response.json()
+
+        raw_text = self._extract_outline_text(
+            (((body.get("choices") or [{}])[0]).get("message") or {}).get("content")
+        )
+        if not raw_text.strip():
+            raise ValueError("LLM returned empty content for outline refine")
+        return robust_parse_json(raw_text, strip_double_braces=True)

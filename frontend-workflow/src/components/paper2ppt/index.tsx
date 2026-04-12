@@ -635,6 +635,7 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
     return {
       themeName: String(theme.theme_name || theme.themeName || 'locked_deck_theme'),
       visualMood: String(theme.visual_mood || theme.visualMood || ''),
+      styleFamily: String(theme.style_family || theme.styleFamily || 'modern') as FrontendDeckTheme['styleFamily'],
       footerText: String(theme.footer_text || theme.footerText || ''),
       sectionLabelTemplate: String(theme.section_label_template || theme.sectionLabelTemplate || ''),
       palette: {
@@ -2405,11 +2406,15 @@ const Paper2PptPage: React.FC<Paper2PptPageProps> = ({ initialMode }) => {
       const fileName = resultPath
         ? `${resultPath.split('/').pop() || 'paper2ppt'}_structured_editable.pptx`
         : 'paper2ppt_structured_editable.pptx';
-      const { blob } = await exportStructuredSlidesToPptx({
+      const exported = await exportStructuredSlidesToPptx({
         slides: frontendSlides,
         deckTheme: frontendDeckTheme,
         fileName,
       });
+      if (!('blob' in exported) || !exported.blob) {
+        throw new Error('前端导出未返回浏览器 Blob');
+      }
+      const { blob } = exported;
       if (downloadUrl?.startsWith('blob:')) {
         URL.revokeObjectURL(downloadUrl);
       }

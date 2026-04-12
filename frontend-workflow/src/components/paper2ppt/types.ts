@@ -195,9 +195,12 @@ export interface FrontendDeckTypography {
   bodySize: number;
 }
 
+export type FrontendDeckStyleFamily = 'modern' | 'business' | 'academic' | 'creative';
+
 export interface FrontendDeckTheme {
   themeName: string;
   visualMood: string;
+  styleFamily: FrontendDeckStyleFamily;
   footerText: string;
   sectionLabelTemplate: string;
   palette: FrontendDeckPalette;

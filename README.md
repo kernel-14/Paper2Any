@@ -354,6 +354,27 @@ Paper2Any currently includes the following sub-capabilities:
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)
 ![pip](https://img.shields.io/badge/pip-latest-3776AB?style=flat-square&logo=pypi&logoColor=white)
 
+### `.env` Modes
+
+Paper2Any now supports two configuration styles:
+
+- **Simple mode**: use `*.env.simple.example`. Recommended for most self-hosted users.
+- **Advanced mode**: use `*.env.example`. Use this only when you need workflow-specific model/provider overrides.
+
+Quick choice:
+
+```bash
+cp fastapi_app/.env.simple.example fastapi_app/.env
+cp frontend-workflow/.env.simple.example frontend-workflow/.env
+```
+
+If you need fine-grained workflow overrides instead:
+
+```bash
+cp fastapi_app/.env.example fastapi_app/.env
+cp frontend-workflow/.env.example frontend-workflow/.env
+```
+
 <details>
 <summary><strong>🐳 Docker (Recommended) — Deployment & Updates</strong></summary>
 
@@ -363,8 +384,8 @@ git clone https://github.com/OpenDCAI/Paper2Any.git
 cd Paper2Any
 
 # 2. Configure environment variables
-cp fastapi_app/.env.example fastapi_app/.env
-cp frontend-workflow/.env.example frontend-workflow/.env
+cp fastapi_app/.env.simple.example fastapi_app/.env
+cp frontend-workflow/.env.simple.example frontend-workflow/.env
 cp deploy/docker.env.example deploy/docker.env
 ```
 
@@ -375,12 +396,21 @@ cp deploy/docker.env.example deploy/docker.env
 # Internal API auth key. Must match frontend VITE_API_KEY.
 BACKEND_API_KEY=your-backend-api-key
 
-# Required: Your LLM API URL (replace with your own)
-DEFAULT_LLM_API_URL=https://api.openai.com/v1/
+# Recommended: let backend own all workflow model choices
+APP_BILLING_MODE=free
+PAPER2ANY_CONFIG_MODE=simple
+
+# Required: unified text entry
+SIMPLE_TEXT_API_URL=https://your-text-gateway/v1
+SIMPLE_TEXT_API_KEY=your_text_key
+
+# Optional but recommended: unified image entry
+SIMPLE_IMAGE_API_URL=https://your-image-gateway
+SIMPLE_IMAGE_API_KEY=your_image_key
 
 # Optional: DrawIO OCR / VLM service
-PAPER2DRAWIO_OCR_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-PAPER2DRAWIO_OCR_API_KEY=your_dashscope_key
+SIMPLE_OCR_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+SIMPLE_OCR_API_KEY=your_dashscope_key
 
 # Optional: MinerU official remote API
 MINERU_API_BASE_URL=https://mineru.net/api/v4
@@ -402,6 +432,10 @@ VITE_API_KEY=your-backend-api-key
 
 # Usually keep VITE_API_BASE_URL empty in Docker, because nginx proxies /api and /outputs
 VITE_API_BASE_URL=
+
+# Frontend display defaults only
+VITE_DEFAULT_LLM_API_URL=https://your-text-gateway/v1
+VITE_DEFAULT_LLM_MODEL=gpt-4o
 
 # Optional: Supabase (keep consistent with backend)
 # VITE_SUPABASE_URL=https://your-project-id.supabase.co

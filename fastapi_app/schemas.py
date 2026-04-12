@@ -218,7 +218,7 @@ class PageContentRequest(BaseModel):
     language: str = "zh"
     style: str = ""
     reference_img: Optional[Any] = None
-    gen_fig_model: str = Field(...)
+    gen_fig_model: str = settings.PAPER2PPT_IMAGE_GEN_MODEL
     page_count: int = 5
     use_long_paper: str = "false"
     # 当 input_type=pdf 时，是否按“幻灯片图片”模式解析（跳过 MinerU 解析）

@@ -9,6 +9,7 @@ import {
   DESIGN_HEIGHT,
   DESIGN_WIDTH,
   ensureDeckTheme,
+  getDeckStyleFamily,
   getField,
   getListValue,
   getTextValue,
@@ -23,12 +24,39 @@ interface StructuredSlideCanvasProps {
 
 const toCssFont = (value: string) => value || 'system-ui, sans-serif';
 
-const basePanelStyle = (theme: FrontendDeckTheme): React.CSSProperties => ({
-  background: theme.palette.panel,
-  border: `1px solid ${theme.palette.primary}33`,
-  borderRadius: 28,
-  boxShadow: '0 30px 60px rgba(15, 23, 42, 0.35)',
-});
+const basePanelStyle = (theme: FrontendDeckTheme): React.CSSProperties => {
+  const family = getDeckStyleFamily(theme);
+  if (family === 'academic') {
+    return {
+      background: theme.palette.panel,
+      border: `1.5px solid ${theme.palette.primary}22`,
+      borderRadius: 18,
+      boxShadow: '0 16px 34px rgba(15, 23, 42, 0.08)',
+    };
+  }
+  if (family === 'business') {
+    return {
+      background: theme.palette.panel,
+      border: `1px solid ${theme.palette.primary}28`,
+      borderRadius: 18,
+      boxShadow: '0 22px 44px rgba(15, 23, 42, 0.16)',
+    };
+  }
+  if (family === 'creative') {
+    return {
+      background: theme.palette.panel,
+      border: `1px solid ${theme.palette.primary}26`,
+      borderRadius: 32,
+      boxShadow: '0 28px 60px rgba(99, 102, 241, 0.12)',
+    };
+  }
+  return {
+    background: theme.palette.panel,
+    border: `1px solid ${theme.palette.primary}33`,
+    borderRadius: 28,
+    boxShadow: '0 30px 60px rgba(15, 23, 42, 0.35)',
+  };
+};
 
 const editableText = (
   field: FrontendEditableField | undefined,
@@ -143,6 +171,7 @@ export const StructuredSlideCanvas: React.FC<StructuredSlideCanvasProps> = ({
   useOriginalAssets = false,
 }) => {
   const theme = ensureDeckTheme(deckTheme);
+  const styleFamily = getDeckStyleFamily(theme);
   const field = (key?: string) => getField(slide, key);
   const text = (key?: string) => getTextValue(slide, key);
   const list = (key?: string) => getListValue(slide, key);
@@ -154,12 +183,19 @@ export const StructuredSlideCanvas: React.FC<StructuredSlideCanvasProps> = ({
     width: DESIGN_WIDTH,
     height: DESIGN_HEIGHT,
     overflow: 'hidden',
-    borderRadius: 28,
-    background: `
-      radial-gradient(circle at top right, ${theme.palette.secondary}33 0%, transparent 28%),
-      radial-gradient(circle at bottom left, ${theme.palette.accent}22 0%, transparent 32%),
-      ${theme.palette.bg}
-    `,
+    borderRadius: styleFamily === 'academic' ? 18 : styleFamily === 'business' ? 20 : 28,
+    background:
+      styleFamily === 'academic'
+        ? `linear-gradient(180deg, ${theme.palette.bg}, ${theme.palette.bg}), repeating-linear-gradient(180deg, transparent 0, transparent 35px, ${theme.palette.primary}08 36px)`
+        : styleFamily === 'business'
+          ? `linear-gradient(135deg, ${theme.palette.bg} 0%, ${theme.palette.bg} 74%, ${theme.palette.accent}12 100%)`
+          : styleFamily === 'creative'
+            ? `radial-gradient(circle at 12% 18%, ${theme.palette.secondary}28 0%, transparent 24%), radial-gradient(circle at 84% 14%, ${theme.palette.accent}24 0%, transparent 22%), linear-gradient(160deg, ${theme.palette.bg} 0%, ${theme.palette.bg} 62%, ${theme.palette.primary}10 100%)`
+            : `
+                radial-gradient(circle at top right, ${theme.palette.secondary}33 0%, transparent 28%),
+                radial-gradient(circle at bottom left, ${theme.palette.accent}22 0%, transparent 32%),
+                ${theme.palette.bg}
+              `,
     color: theme.palette.text,
     fontFamily: toCssFont(theme.typography.bodyFontStack),
   };
@@ -177,25 +213,53 @@ export const StructuredSlideCanvas: React.FC<StructuredSlideCanvasProps> = ({
       style={{
         position: 'absolute',
         inset: 0,
-        backgroundImage: 'linear-gradient(rgba(148,163,184,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.08) 1px, transparent 1px)',
-        backgroundSize: '48px 48px',
-        opacity: 0.22,
+        backgroundImage:
+          styleFamily === 'academic'
+            ? `linear-gradient(${theme.palette.primary}10 1px, transparent 1px)`
+            : styleFamily === 'business'
+              ? `linear-gradient(90deg, ${theme.palette.primary}10 1px, transparent 1px)`
+              : 'linear-gradient(rgba(148,163,184,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.08) 1px, transparent 1px)',
+        backgroundSize:
+          styleFamily === 'academic'
+            ? '100% 44px'
+            : styleFamily === 'business'
+              ? '84px 100%'
+              : '48px 48px',
+        opacity: styleFamily === 'creative' ? 0 : styleFamily === 'academic' ? 0.12 : 0.22,
       }}
     />
   );
 
+  const chromeLayer = styleFamily === 'business'
+    ? (
+      <>
+        <div style={{ position: 'absolute', inset: '0 0 auto 0', height: 28, background: theme.palette.accent, opacity: 0.92 }} />
+        <div style={{ position: 'absolute', inset: '110px auto 96px 52px', width: 4, borderRadius: 999, background: `${theme.palette.primary}55` }} />
+      </>
+    )
+    : styleFamily === 'creative'
+      ? (
+        <>
+          <div style={{ position: 'absolute', top: -80, right: -40, width: 320, height: 320, borderRadius: '50%', background: `${theme.palette.secondary}22`, filter: 'blur(12px)' }} />
+          <div style={{ position: 'absolute', bottom: -60, left: -30, width: 260, height: 260, borderRadius: '50%', background: `${theme.palette.accent}20`, filter: 'blur(10px)' }} />
+        </>
+      )
+      : styleFamily === 'academic'
+        ? <div style={{ position: 'absolute', inset: '114px 72px auto 72px', height: 2, background: `${theme.palette.primary}18` }} />
+        : null;
+
   const eyebrowStyle: React.CSSProperties = {
     display: 'inline-flex',
     alignSelf: 'flex-start',
-    padding: '8px 14px',
-    borderRadius: 999,
-    background: `${theme.palette.secondary}22`,
-    border: `1px solid ${theme.palette.primary}55`,
+    padding: styleFamily === 'business' ? '9px 16px' : '8px 14px',
+    borderRadius: styleFamily === 'academic' ? 12 : 999,
+    background: styleFamily === 'academic' ? `${theme.palette.primary}10` : `${theme.palette.secondary}22`,
+    border: `1px solid ${theme.palette.primary}${styleFamily === 'academic' ? '38' : '55'}`,
     color: theme.palette.primary,
     fontSize: theme.typography.eyebrowSize,
     fontWeight: 700,
-    letterSpacing: '0.08em',
-    textTransform: 'uppercase',
+    letterSpacing: styleFamily === 'creative' ? '0.04em' : '0.08em',
+    textTransform: styleFamily === 'creative' ? 'none' : 'uppercase',
   };
 
   const titleStyle: React.CSSProperties = {
@@ -206,6 +270,7 @@ export const StructuredSlideCanvas: React.FC<StructuredSlideCanvasProps> = ({
     fontFamily: toCssFont(theme.typography.titleFontStack),
     color: theme.palette.text,
     whiteSpace: 'pre-wrap',
+    textWrap: 'balance',
   };
 
   const summaryStyle: React.CSSProperties = {
@@ -225,12 +290,17 @@ export const StructuredSlideCanvas: React.FC<StructuredSlideCanvasProps> = ({
         justifyContent: 'center',
         minWidth: 220,
         padding: '14px 18px',
-        borderRadius: 999,
-        border: `1px solid ${theme.palette.accent}55`,
+        borderRadius: styleFamily === 'academic' ? 12 : 999,
+        border: `1px solid ${theme.palette.accent}${styleFamily === 'academic' ? '40' : '55'}`,
         color: theme.palette.accent,
         fontSize: theme.typography.eyebrowSize,
         fontWeight: 700,
-        background: 'rgba(15, 23, 42, 0.45)',
+        background:
+          styleFamily === 'academic'
+            ? `${theme.palette.panel}`
+            : styleFamily === 'business'
+              ? `${theme.palette.bg}E6`
+              : 'rgba(15, 23, 42, 0.45)',
       }}
     >
       <span data-edit-key={footerKey || ''} data-edit-type={field(footerKey)?.type || 'text'}>
@@ -438,6 +508,7 @@ export const StructuredSlideCanvas: React.FC<StructuredSlideCanvasProps> = ({
     <div style={shellStyle}>
       <div style={slideShellStyle}>
         {gridLayer}
+        {chromeLayer}
         {body}
       </div>
     </div>

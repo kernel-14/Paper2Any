@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -60,6 +61,8 @@ Examples:
     parser.add_argument("--use-long-paper", action="store_true", help="Force long-paper outline workflow")
     parser.add_argument("--include-images", action="store_true", help="Generate/reuse supporting images for editable slides")
     parser.add_argument("--image-style", default="academic_illustration", help="Image style prompt")
+    parser.add_argument("--export-pptx", action="store_true", help="Also export editable PPTX using the frontend PptxGenJS exporter")
+    parser.add_argument("--asset-base-url", default="http://127.0.0.1:8000", help="Base URL for /outputs assets during PPTX export")
     parser.add_argument("--output-dir", help="Output directory (default: outputs/cli/paper2ppt_frontend/{timestamp})")
     return parser.parse_args()
 
@@ -190,12 +193,39 @@ async def run_frontend_workflow(args, input_content: str, input_type: str, outpu
     log.info("Slides JSON: %s", slides_json_path)
     log.info("Theme JSON: %s", theme_json_path)
 
+    exported_pptx = None
+    if args.export_pptx:
+        exported_pptx = (output_dir / "paper2ppt_frontend_editable.pptx").resolve()
+        slides_json_arg = slides_json_path.resolve()
+        theme_json_arg = theme_json_path.resolve()
+        export_cmd = [
+            "npx",
+            "tsx",
+            "scripts/run_paper2ppt_structured_export_cli.ts",
+            "--slides-json",
+            str(slides_json_arg),
+            "--theme-json",
+            str(theme_json_arg),
+            "--output",
+            str(exported_pptx),
+            "--asset-base-url",
+            args.asset_base_url,
+        ]
+        log.info("Exporting editable PPTX via frontend CLI: %s", " ".join(export_cmd))
+        subprocess.run(
+            export_cmd,
+            cwd=str(PROJECT_ROOT / "frontend-workflow"),
+            check=True,
+        )
+        log.info("Editable PPTX: %s", exported_pptx)
+
     return {
         "pagecontent": pagecontent,
         "slides": slides,
         "result_path": result_path,
         "slides_json": str(slides_json_path),
         "theme_json": str(theme_json_path),
+        "pptx_path": str(exported_pptx) if exported_pptx else "",
     }
 
 

@@ -345,6 +345,27 @@ Paper2Any 当前包含以下几个子能力：
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)
 ![pip](https://img.shields.io/badge/pip-latest-3776AB?style=flat-square&logo=pypi&logoColor=white)
 
+### `.env` 配置模式
+
+现在有两套配置方式：
+
+- **粗粒度模式**：使用 `*.env.simple.example`。推荐大多数自部署用户直接用这套。
+- **细粒度模式**：使用 `*.env.example`。只有需要逐个 workflow 覆盖模型和 provider 时再用。
+
+推荐起步：
+
+```bash
+cp fastapi_app/.env.simple.example fastapi_app/.env
+cp frontend-workflow/.env.simple.example frontend-workflow/.env
+```
+
+如果确实需要细粒度覆盖，再改成：
+
+```bash
+cp fastapi_app/.env.example fastapi_app/.env
+cp frontend-workflow/.env.example frontend-workflow/.env
+```
+
 <details>
 <summary><strong>🐳 Docker 快速启动（推荐）— 部署与更新</strong></summary>
 
@@ -354,8 +375,8 @@ git clone https://github.com/OpenDCAI/Paper2Any.git
 cd Paper2Any
 
 # 2. 配置环境变量
-cp fastapi_app/.env.example fastapi_app/.env
-cp frontend-workflow/.env.example frontend-workflow/.env
+cp fastapi_app/.env.simple.example fastapi_app/.env
+cp frontend-workflow/.env.simple.example frontend-workflow/.env
 cp deploy/docker.env.example deploy/docker.env
 ```
 
@@ -366,12 +387,21 @@ cp deploy/docker.env.example deploy/docker.env
 # 内部接口鉴权 key，必须与前端 VITE_API_KEY 一致
 BACKEND_API_KEY=your-backend-api-key
 
-# 必填：你的 LLM API 地址（替换为你自己的）
-DEFAULT_LLM_API_URL=https://api.openai.com/v1/
+# 推荐：由后端统一决定 workflow 使用的模型
+APP_BILLING_MODE=free
+PAPER2ANY_CONFIG_MODE=simple
+
+# 必填：统一文本入口
+SIMPLE_TEXT_API_URL=https://your-text-gateway/v1
+SIMPLE_TEXT_API_KEY=your_text_key
+
+# 可选但推荐：统一生图入口
+SIMPLE_IMAGE_API_URL=https://your-image-gateway
+SIMPLE_IMAGE_API_KEY=your_image_key
 
 # 可选：DrawIO OCR / VLM 服务
-PAPER2DRAWIO_OCR_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-PAPER2DRAWIO_OCR_API_KEY=your_dashscope_key
+SIMPLE_OCR_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+SIMPLE_OCR_API_KEY=your_dashscope_key
 
 # 可选：MinerU 官方远端 API
 MINERU_API_BASE_URL=https://mineru.net/api/v4
@@ -393,6 +423,10 @@ VITE_API_KEY=your-backend-api-key
 
 # Docker 下通常保持为空，由 nginx 反代 /api 和 /outputs
 VITE_API_BASE_URL=
+
+# 前端只负责展示默认值，不控制后端真实模型
+VITE_DEFAULT_LLM_API_URL=https://your-text-gateway/v1
+VITE_DEFAULT_LLM_MODEL=gpt-4o
 
 # 可选：Supabase（与后端保持一致）
 # VITE_SUPABASE_URL=https://your-project-id.supabase.co

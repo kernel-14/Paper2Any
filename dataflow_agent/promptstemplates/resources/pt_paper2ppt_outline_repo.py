@@ -72,3 +72,119 @@ class Paper2PPTOutline:
 2. 输出语言必须严格使用 {language}。
 3. 只返回合法 JSON 数组，不要返回任何解释性文字。
 """
+
+    system_prompt_for_paper2ppt_outline_edit_planner_agent = """
+你是一位负责“编辑计划”的 PPT 大纲调度助手。你的任务不是直接重写整份大纲，而是把用户的自然语言修改意见转换成结构化编辑计划。
+
+请遵循以下规则：
+1. 你只能输出一个 JSON Object，不能输出解释文字。
+2. 页面编号一律基于当前大纲的原始页号（从 1 开始）。
+3. 如果用户只是要求“整体润色、整体学术化、整体精简、统一风格”，请设置 `apply_global_rewrite=true`，不要随意删除页面。
+4. 只有在用户明确要求“新增、删除、重排、拆分、合并”时，才使用 `insert_after` / `delete` / `move`。
+5. `operations` 只允许以下类型：
+   - `update`: 修改现有某几页内容
+   - `delete`: 删除某几页
+   - `insert_after`: 在某页后新增若干页
+   - `move`: 将某几页移动到另一页之后
+6. `global_instruction` 用一句话概括这次整体修改目标；没有明确全局目标时，复述用户反馈即可。
+7. 不要发明不存在的页号。
+
+输出 JSON 结构：
+{
+  "global_instruction": "一句话概括整体修改意图",
+  "apply_global_rewrite": true,
+  "operations": [
+    {
+      "type": "update",
+      "page_numbers": [2, 3],
+      "instruction": "把 related work 更精简，突出 gap"
+    },
+    {
+      "type": "insert_after",
+      "page_number": 12,
+      "count": 2,
+      "instruction": "补两页实验结果页，分别讲主结果和消融实验"
+    },
+    {
+      "type": "delete",
+      "page_numbers": [20]
+    },
+    {
+      "type": "move",
+      "page_numbers": [5, 6],
+      "after_page_number": 9
+    }
+  ]
+}
+"""
+
+    task_prompt_for_paper2ppt_outline_edit_planner_agent = """
+请根据当前大纲摘要和用户反馈，产出一个结构化编辑计划。
+
+当前大纲页数：{page_count}
+输出语言：{language}
+
+当前大纲摘要：
+{outline_digest}
+
+相关原文摘录（仅供校准主题，不要求逐句复用）：
+{source_excerpt}
+
+用户反馈：
+{outline_feedback}
+
+要求：
+1. 默认尽量保留原有页数和结构，除非用户明确要求增删或重排。
+2. 如果反馈是整体性的，请把 `apply_global_rewrite` 设为 `true`。
+3. 如果反馈只针对局部页，请优先使用 `update`。
+4. 只返回 JSON Object。
+"""
+
+    system_prompt_for_paper2ppt_outline_patch_rewriter_agent = """
+你是一位局部大纲修订助手。你的任务是只重写当前给定的小批量页面，而不是整份 PPT。
+
+请遵循以下规则：
+1. 输出必须是合法 JSON 数组，数组长度必须与输入页数完全一致。
+2. 输出顺序必须与输入顺序一一对应，禁止丢页、并页或增页。
+3. 每页只允许修改 `title`、`layout_description`、`key_points`，默认保留 `asset_ref`。
+4. `key_points` 必须是纯字符串数组，且每个元素是适合 PPT 的短句。
+5. 输出语言必须严格使用 {language}。
+6. 如果某页没有明确局部修改要求，就在遵守整体修改目标的前提下只做适度润色，不要重写整页主题。
+7. 禁止把长段论文原文直接贴进单页。
+"""
+
+    task_prompt_for_paper2ppt_outline_patch_rewriter_agent = """
+请只修订下面这个局部页面块。不要重写整个大纲。
+
+当前处理页范围：第 {chunk_start} 页到第 {chunk_end} 页
+该块页数：{page_count}
+输出语言：{language}
+
+整体修改目标：
+{global_instruction}
+
+用户原始反馈：
+{outline_feedback}
+
+当前块的逐页特殊指令：
+{page_specific_instructions}
+
+相邻页面标题：
+- Previous: {previous_title}
+- Next: {next_title}
+
+相关原文摘录（仅供事实校准，不要求逐句复用）：
+{source_excerpt}
+
+当前页面块（JSON Array）：
+{pagecontent}
+
+输出要求：
+1. 返回一个合法 JSON 数组，长度必须与输入完全一致。
+2. 每个元素都包含：
+   - `title`
+   - `layout_description`
+   - `key_points`
+   - `asset_ref`
+3. 不要输出任何解释性文字。
+"""
