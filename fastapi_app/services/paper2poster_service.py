@@ -9,8 +9,9 @@ from uuid import uuid4
 from fastapi import HTTPException, UploadFile
 
 from dataflow_agent.logger import get_logger
+from fastapi_app.config import settings
 from dataflow_agent.utils import get_project_root
-from fastapi_app.services.managed_api_service import resolve_llm_credentials
+from fastapi_app.services.managed_api_service import resolve_llm_credentials, resolve_model_name
 from fastapi_app.utils import _to_outputs_url
 from fastapi_app.workflow_adapters.wa_paper2poster import run_paper2poster_generate_wf_api
 
@@ -100,6 +101,16 @@ class Paper2PosterService:
             chat_api_url,
             api_key,
             scope="paper2poster",
+        )
+        model = resolve_model_name(
+            model,
+            managed_default=settings.PAPER2POSTER_DEFAULT_MODEL,
+            fallback_default="gpt-4o",
+        )
+        vision_model = resolve_model_name(
+            vision_model,
+            managed_default=settings.PAPER2POSTER_VISION_MODEL,
+            fallback_default="gpt-4o",
         )
         self._validate_poster_dimensions(poster_width, poster_height)
 
