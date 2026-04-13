@@ -83,15 +83,20 @@ VITE_API_BASE_URL=
 - 本地 `npm run dev` + Vite 代理模式下，`VITE_API_BASE_URL` 通常留空。
 - 如果你准备启用登录、账户点数、历史文件，需要继续补 `SUPABASE_*`。详见 [开源部署与配置总指南](guides/open_source_deployment.md)。
 
-### 6. 启动后端
+### 6. 启动整套服务（推荐）
 
 ```bash
-bash deploy/start.sh
+bash deploy/start_nv.sh
 ```
 
-### 7. 启动前端
+### 7. 手动分开启动（可选）
 
 ```bash
+set -a
+source deploy/profiles/nv.env
+set +a
+
+bash deploy/start.sh
 bash deploy/start_frontend.sh
 ```
 

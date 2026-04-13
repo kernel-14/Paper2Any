@@ -619,16 +619,15 @@ VITE_LLM_API_URLS=https://api.apiyi.com/v1,http://b.apiyi.com:16888/v1,http://12
 ```bash
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-SUPABASE_JWT_SECRET=your-jwt-secret
 ```
 
 ##### 不配置 Supabase 的情况
 
 如果跳过 Supabase 配置：
 - ✅ 所有核心功能正常工作
-- ✅ CLI 脚本无需任何配置即可使用
-- ❌ 无用户认证或配额限制
+- ✅ CLI 脚本不依赖 Supabase
+- ❌ 无用户认证
+- ❌ 无账户积分、兑换码、邀请码、历史文件等账号能力
 - ❌ 无云文件存储
 
 </details>
@@ -740,18 +739,8 @@ pip install vllm-0.11.0+cu124-cp312-cp312-win_amd64.whl
 **Paper2Any - 论文工作流 Web 前端（推荐）**
 
 ```bash
-# 本地后端运行配置统一在 deploy/app_config.sh 中维护
-# 可在该文件中修改：
-#   APP_PORT=8000
-#   APP_WORKERS=2
-
-# 启动后端 API
-./deploy/start.sh
-
-# 启动前端（新终端）
-cd frontend-workflow
-npm install
-npm run dev
+# NVIDIA 机器推荐直接使用一键入口
+bash deploy/start_nv.sh
 ```
 
 本地默认访问地址：
@@ -759,12 +748,15 @@ npm run dev
 - 后端健康检查：http://127.0.0.1:8000/health
 
 本地部署常用命令：
-- 启动后端：`./deploy/start.sh`
+- 推荐启动整套：`bash deploy/start_nv.sh`
+- 仅启动后端（需先加载 profile）：
+  `set -a && source deploy/profiles/nv.env && set +a && bash deploy/start.sh`
 - 停止后端：`./deploy/stop.sh`
 - 重启后端：`./deploy/restart.sh`
 
 说明：
-- `deploy/start.sh` 和 `deploy/stop.sh` 都会读取同一个 `deploy/app_config.sh`，端口不再分别写死。
+- `deploy/start.sh` 会读取 `deploy/app_config.sh`，但不会自动加载 `deploy/profiles/*.env`。
+- `deploy/start_nv.sh` 才是当前最稳妥的一键入口：它会加载 `deploy/profiles/nv.env`、准备本地模型、启动模型服务，再启动后端和前端。
 - 如果修改了 `APP_PORT`，也要同步更新 `frontend-workflow/vite.config.ts` 里的前端代理地址。
 
 **配置前端代理**
@@ -813,15 +805,8 @@ vllm serve opendatalab/MinerU2.5-2509-1.2B `
 #### 🎨 Web 前端（推荐）
 
 ```bash
-# 如需修改本地端口或 worker 数，请先编辑 deploy/app_config.sh
-
-# 启动后端 API
-./deploy/start.sh
-
-# 启动前端（新终端）
-cd frontend-workflow
-npm install
-npm run dev
+# NVIDIA 机器推荐直接使用一键入口
+bash deploy/start_nv.sh
 ```
 
 访问 `http://localhost:3000`。

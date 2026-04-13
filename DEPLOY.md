@@ -309,6 +309,10 @@ bash deploy/stop_stack.sh
 ### 仅启动后端
 
 ```bash
+set -a
+source deploy/profiles/nv.env
+set +a
+
 bash deploy/start.sh
 ```
 

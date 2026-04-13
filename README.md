@@ -632,16 +632,15 @@ VITE_LLM_API_URLS=https://api.apiyi.com/v1,http://b.apiyi.com:16888/v1,http://12
 ```bash
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-SUPABASE_JWT_SECRET=your-jwt-secret
 ```
 
 ##### Running Without Supabase
 
 If you skip Supabase configuration:
 - ✅ All core features work normally
-- ✅ CLI scripts work without any configuration
-- ❌ No user authentication or quotas
+- ✅ CLI scripts do not require Supabase
+- ❌ No user authentication
+- ❌ No cloud account features such as points, redeem, invite, and history
 - ❌ No cloud file storage
 
 </details>
@@ -753,18 +752,8 @@ pip install vllm-0.11.0+cu124-cp312-cp312-win_amd64.whl
 **Paper2Any - Paper Workflow Web Frontend (Recommended)**
 
 ```bash
-# Configure local backend runtime (single source of truth)
-# Edit deploy/app_config.sh:
-#   APP_PORT=8000
-#   APP_WORKERS=2
-
-# Start backend API
-./deploy/start.sh
-
-# Start frontend (new terminal)
-cd frontend-workflow
-npm install
-npm run dev
+# Recommended one-click entrypoint on NVIDIA machines
+bash deploy/start_nv.sh
 ```
 
 Default local addresses:
@@ -772,12 +761,15 @@ Default local addresses:
 - Backend health: http://127.0.0.1:8000/health
 
 Useful local deploy commands:
-- Start backend: `./deploy/start.sh`
+- Start full stack (recommended): `bash deploy/start_nv.sh`
+- Start backend only after loading a deploy profile:
+  `set -a && source deploy/profiles/nv.env && set +a && bash deploy/start.sh`
 - Stop backend: `./deploy/stop.sh`
 - Restart backend: `./deploy/restart.sh`
 
 Notes:
-- `deploy/start.sh` and `deploy/stop.sh` both read the same runtime config from `deploy/app_config.sh`.
+- `deploy/start.sh` reads `deploy/app_config.sh`, but it does not load `deploy/profiles/*.env` by itself.
+- `deploy/start_nv.sh` is the safe one-click entrypoint because it loads `deploy/profiles/nv.env`, prepares local models, starts model servers, then starts backend and frontend.
 - If you change `APP_PORT`, update the frontend proxy target in `frontend-workflow/vite.config.ts` as well.
 
 **Configure Frontend Proxy**
@@ -827,15 +819,8 @@ vllm serve opendatalab/MinerU2.5-2509-1.2B `
 #### 🎨 Web Frontend (Recommended)
 
 ```bash
-# Configure deploy/app_config.sh first if you want to change the local port/workers
-
-# Start backend API
-./deploy/start.sh
-
-# Start frontend (new terminal)
-cd frontend-workflow
-npm install
-npm run dev
+# Recommended one-click entrypoint on NVIDIA machines
+bash deploy/start_nv.sh
 ```
 
 Visit `http://localhost:3000`.
