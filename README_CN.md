@@ -59,6 +59,34 @@
 ## 🔥 News
 
 > [!TIP]
+> 🆕 <strong>2026-04-15 · 2026 论文进展</strong><br>
+> 两篇与 Paper2Any 相关的论文已进入 2026 会议信息流：<br>
+> <a href="https://arxiv.org/abs/2511.18036" target="_blank"><strong>Paper2SysArch: Structure-Constrained System Architecture Generation from Scientific Papers</strong></a> · <strong>CVPR 2026 Findings</strong><br>
+> <a href="https://arxiv.org/abs/2602.09809" target="_blank"><strong>SciFlow-Bench: Evaluating Structure-Aware Scientific Diagram Generation via Inverse Parsing</strong></a> · <strong>ACL 2026 Main</strong>
+>
+> <details>
+> <summary><strong>BibTeX</strong></summary>
+>
+> ```bibtex
+> @article{guo2025paper2sysarch,
+>   title   = {Paper2SysArch: Structure-Constrained System Architecture Generation from Scientific Papers},
+>   author  = {Guo, Ziyi and Liu, Zhou and Zhang, Wentao},
+>   journal = {arXiv preprint arXiv:2511.18036},
+>   year    = {2025},
+>   note    = {CVPR 2026 Findings}
+> }
+>
+> @article{zhang2026sciflowbench,
+>   title   = {SciFlow-Bench: Evaluating Structure-Aware Scientific Diagram Generation via Inverse Parsing},
+>   author  = {Zhang, Tong and Lin, Honglin and Liu, Zhou and Chen, Chong and Zhang, Wentao},
+>   journal = {arXiv preprint arXiv:2602.09809},
+>   year    = {2026},
+>   note    = {ACL 2026 Main}
+> }
+> ```
+> </details>
+
+> [!TIP]
 > 🆕 <strong>2026-03-28 · 可编辑版 PPT 展示更新</strong><br>
 > 新增两张 <strong>可编辑版 PPT</strong> 工作流展示图：<br>
 > 一张用于展示多页生成后的 deck 总览，一张用于展示带主题锁定与画布编辑的编辑工作区。
