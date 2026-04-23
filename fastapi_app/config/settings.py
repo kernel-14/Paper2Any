@@ -101,6 +101,10 @@ class AppSettings(BaseSettings):
     PAPER2REBUTTAL_MANAGED_API_KEY: str = ""
     PAPER2REBUTTAL_MANAGED_IMAGE_API_URL: str = ""
     PAPER2REBUTTAL_MANAGED_IMAGE_API_KEY: str = ""
+    IMAGE_PLAYGROUND_MANAGED_API_URL: str = ""
+    IMAGE_PLAYGROUND_MANAGED_API_KEY: str = ""
+    IMAGE_PLAYGROUND_MANAGED_IMAGE_API_URL: str = ""
+    IMAGE_PLAYGROUND_MANAGED_IMAGE_API_KEY: str = ""
     LLM_VERIFY_TIMEOUT_SECONDS: int = 25
     LLM_VERIFY_MAX_TOKENS: int = 32
     APP_BILLING_MODE: str = "paid"
@@ -203,6 +207,7 @@ class AppSettings(BaseSettings):
     PAPER2POSTER_DEFAULT_MODEL: str = "gpt-4o"
     PAPER2POSTER_VISION_MODEL: str = "gpt-4o"
     PAPER2REBUTTAL_DEFAULT_MODEL: str = "gpt-4o"
+    IMAGE_PLAYGROUND_DEFAULT_IMAGE_MODEL: str = "gemini-3.1-flash-image-preview"
 
     # ============================================
     # Layer 3: Role-level Model Configuration

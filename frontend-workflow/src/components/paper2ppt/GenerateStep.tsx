@@ -241,8 +241,8 @@ const GenerateStep: React.FC<GenerateStepProps> = ({
           </h4>
           <div className="rounded-lg overflow-hidden border border-purple-500/30 bg-gradient-to-br from-purple-500/10 to-pink-500/10 p-3">
             {isGenerating ? (
-              <div className="aspect-[16/9] flex items-center justify-center text-center">
-                <Loader2 size={40} className="text-purple-400 animate-spin mx-auto mb-3" />
+              <div className="aspect-[16/9] flex flex-col items-center justify-center text-center">
+                <Loader2 size={40} className="text-purple-400 animate-spin mb-3" />
                 <p className="text-base text-purple-300">
                   {processingCount === generateResults.length
                     ? '正在批量生成所有页面...'

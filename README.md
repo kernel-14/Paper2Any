@@ -59,6 +59,11 @@ English | [中文](README_CN.md)
 ## 🔥 News
 
 > [!TIP]
+> 🆕 <strong>2026-04-24 · Image Model Playground Upgrade</strong><br>
+> Added a new <strong>Image Model Playground</strong> page for managed image generation across Nano Banana 2 / Nano Banana Pro / Image 2 / Image 2 All.<br>
+> The workflow now supports language control, model-specific generation options, <strong>batch generation (1 / 2 / 4 / 8 / 16)</strong>, compressed thumbnail previews, and one-click batch download.
+
+> [!TIP]
 > 🆕 <strong>2026-04-15 · 2026 Paper Updates</strong><br>
 > Two Paper2Any-related papers are now listed in the 2026 cycle:<br>
 > <a href="https://arxiv.org/abs/2511.18036" target="_blank"><strong>Paper2SysArch: Structure-Constrained System Architecture Generation from Scientific Papers</strong></a> · <strong>CVPR 2026 Findings</strong><br>
@@ -139,6 +144,7 @@ Paper2Any currently includes the following sub-capabilities:
 - **📝 Paper2Rebuttal**: Draft structured rebuttals and revision responses with claims-to-evidence grounding.
 - **🖼️ PDF2PPT - Layout-Preserving Conversion**: Accurate layout retention for PDF → editable PPTX.
 - **🖼️ Image2PPT - Image to Slides**: Convert images or screenshots into structured slides.
+- **🔥 Image Model Playground**: Directly call backend-managed image models with prompt templates, language control, batch generation, compressed previews, and zip download.
 - **🎨 PPTPolish - Smart Beautification**: AI-based layout optimization and style transfer.
 - **🎬 Paper2Video**: Generate video scripts and narration assets.
 - **🖼️ Paper2Poster - Academic Poster**: Turn paper PDFs into poster-ready layouts with configurable sections, logos, and export assets.
